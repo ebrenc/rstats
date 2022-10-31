@@ -22,7 +22,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
   n = length(factor_names)
   combinations = c()
   for (r in 1:n) {
-    newset = gtools::permutations(n=n,r=r,v=as.character(1:n)) %>% as_tibble(.name_repair = NULL)
+    newset = gtools::permutations(n=n,r=r,v=as.character(1:n)) %>% data.frame() %>% rename_with(~str_replace_all(., "X", "V"), .cols = everything())
     if(ncol(newset) > 2){
       for (v in 3:ncol(newset)) {
         maintain = newset[,v] > newset[,v-1]
@@ -45,7 +45,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
     }
     rm(cnumber)
     
-    if (str_c("emmeans(model, ~ ", number1, ")") %>% parse(text = .) %>% eval() %>% as_tibble() %>% select(all_of(number1)) %>% count() > 1) {
+    if (str_c("emmeans(model, ~ ", number1, ")") %>% parse(text = .) %>% eval() %>% data.frame() %>% as_tibble() %>% select(all_of(number1)) %>% count() > 1) {
       
       lineofresults = str_c("emmeans(model, ~ ", number1)
       if (str_count(c) == 1) {lineofresults = str_c(lineofresults, ")")}
@@ -133,7 +133,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
                                   p.value >= .1 & estimate < 0 ~ paste(cfield.1, " == ", cfield.2),
                                   TRUE ~ 'not computable'))
     
-    if (length(unique(all_of(categorical_factor_names))) == 1) {
+    if (length(unique(categorical_factor_names)) == 1) {
       model.emmeans = model.emmeans %>%select(term, contrastfield, contrast, cohensd, p.value)
     } else {
       model.emmeans = model.emmeans %>%
@@ -255,4 +255,3 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
   if (extract == TRUE) {return(results.table)}
   
 }
-
