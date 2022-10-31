@@ -250,7 +250,9 @@ voweldist = function(x, inter_group = FALSE,
   
   # End
   
+  if (inter_group == FALSE) {df = df %>% rename(dist_wit_euc = euc_dist, dist_wit_mah = mah_dist, dist_wit_pil = pil_dist)}
+  if (inter_group == TRUE) {df = df %>% rename(dist_bet_euc = euc_dist, dist_bet_mah = mah_dist, dist_bet_pil = pil_dist)}
+  
   return(df)
   
 }
-
