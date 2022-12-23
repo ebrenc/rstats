@@ -179,10 +179,11 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
   rm(term, str_arrange, combinations)
   results.table = results.table %>% filter(!is.na(Chisq)) 
   
-  # Repair rounding
+  # Repair rounding and effect sizes
   
   results.table = results.table %>%
-    mutate(across(where(is.numeric), round, digits = 3))
+    mutate(across(where(is.numeric), round, digits = 3)) %>%
+    mutate(across(contains("cohensd"), abs))
   
   # Do the flextable
   
