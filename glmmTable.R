@@ -6,20 +6,20 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
   model.anova = car::Anova(model, type = c("II", "III", 2, 3), test.statistic = c("Chisq", "F")) %>%
     tibble::rownames_to_column("term") %>% 
     dplyr::rename("p.Chisq" = "Pr(>Chisq)") %>% 
-    select(-everything(), term, Chisq, Df, p.Chisq)
+    select(term, Chisq, Df, p.Chisq)
   
   require(emmeans)
   emm_options(lmerTest.limit = 10000, disable.pbkrtest = T, lmer.df = "satterthwaite", msg.interaction = F)
   
-  factor_names = model %$% attr(modelInfo$reTrms$cond$terms$fixed,"dataClasses") %>% data.frame(class = .) %>% tibble::rownames_to_column("term") %>% tail(-1) %>% select(term) %>% sapply(as.character) %>% as.character()
-  categorical_factor_names = model %$% attr(modelInfo$reTrms$cond$terms$fixed,"dataClasses") %>% data.frame(class = .) %>% tibble::rownames_to_column("term") %>% tail(-1) %>% filter(class == "factor" | class == "character") %>% select(term) %>% sapply(as.character) %>% as.character()
-  `%notin%` = Negate(`%in%`)
-  non_categorical_factor_names = factor_names[factor_names %notin% categorical_factor_names]
-  rm(`%notin%`)
-  
-  for (f in 1:length(factor_names)) {assign(str_c("f", f), factor_names[f])}; rm(f)
+  terms = attr(model$modelInfo$reTrms$cond$terms$fixed, "dataClasses") %>% enframe()
+  factor_names = terms %>% tail(-1) %>% pluck("name")
+  categorical_factor_names = terms %>% tail(-1) %>% filter(value %in% c("factor", "character")) %>% pluck("name")
+  non_categorical_factor_names = factor_names[!factor_names %in% categorical_factor_names]
+  rm(terms)
   
   n = length(factor_names)
+  for (f in 1:n) {assign(str_c("f", f), factor_names[f])}; rm(f)
+  
   combinations = c()
   for (r in 1:n) {
     newset = gtools::permutations(n=n,r=r,v=as.character(1:n)) %>% data.frame() %>% rename_with(~str_replace_all(., "X", "V"), .cols = everything())
@@ -40,10 +40,8 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
   for (c in combinations) {
     
     for (cnumber in 1:str_count(c)) {
-      assign(x = str_c("number", cnumber), 
-             value = str_c("f", str_sub(c, cnumber, cnumber)) %>% parse(text = .) %>% eval())
-    }
-    rm(cnumber)
+      assign(x = str_c("number", cnumber), value = str_c("f", str_sub(c, cnumber, cnumber)) %>% parse(text = .) %>% eval())
+      }; rm(cnumber)
     
     if (str_c("emmeans(model, ~ ", number1, ")") %>% parse(text = .) %>% eval() %>% data.frame() %>% as_tibble() %>% select(all_of(number1)) %>% count() > 1) {
       
@@ -52,10 +50,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
       if (str_count(c) == 2) {lineofresults = str_c(lineofresults, " | ", number2, ")")}
       if (str_count(c) > 2) {
         numbers = c()
-        for (number in 3:str_count(c)) {
-          # numbers = c(numbers, " * ", str_c("number", str_sub(c, number, number)) %>% parse(text = .) %>% eval())
-          numbers = c(numbers, " * ", str_c("number", number) %>% parse(text = .) %>% eval())
-        }  
+        for (number in 3:str_count(c)) { numbers = c(numbers, " * ", str_c("number", number) %>% parse(text = .) %>% eval()) }  
         numbers = numbers %>% paste(collapse="")
         lineofresults = str_c(lineofresults, " | ", number2, numbers, ")")
         rm(numbers)
@@ -239,7 +234,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
     else if (grepl("cohensd", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Coh.d"}
     else if (grepl("p.value", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Sig"}
     rm(content)
-  }
+  }; rm(alias, number_of_columns)
   
   results = results %>% add_header_row(values = values, top = TRUE); rm(values)
   results = results %>% merge_at(i = 1, j = 1:4, part = "header")
