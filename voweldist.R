@@ -1,4 +1,3 @@
-
 voweldist = function(x, inter_group = FALSE, 
                      segments_var,  # By now, the script works if this variable has only 2 levels
                      tests_var,  # By now, the script works if this variable has only 2 levels
@@ -46,165 +45,165 @@ voweldist = function(x, inter_group = FALSE,
   rm(df_target_subjects, subjects_out)
   
   # Euclidean within
-
+  
   if (inter_group == FALSE) {
-
+    
     # Euclidean distances 1 within 2
-
+    
     d1 = df %>%
       select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var))
-
+    
     d2 = df %>% select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var)) %>% summarise_if(is.numeric, mean, na.rm = T)
-
+    
     euc_segment_1 = left_join(d1, d2, by = c(subjects_var, tests_var))
-
+    
     var_matrix = colnames(euc_segment_1) %>% tail(n_values_var*2) %>% matrix(nrow = n_values_var)
     vector_to_sum = c()
     for (i in 1:n_values_var) {
-      vector_to_sum = c(vector_to_sum, (euc_segment_1[all_of(var_matrix[i,1])] - euc_segment_1[all_of(var_matrix[i,2])])^2)
+      vector_to_sum = c(vector_to_sum, (euc_segment_1[var_matrix[i,1]] - euc_segment_1[var_matrix[i,2]])^2)
     }
     euc_segment_1 = vector_to_sum %>% as.data.frame() %>% rowSums() %>% sqrt() %>% as.data.frame() %>% rename("distance" = ".") %>%
       bind_cols(d1, .) %>% select(!all_of(values_var)) %>%
       mutate(!!segments_var := segments_var_levels[1])
     rm(var_matrix, i, vector_to_sum, d1, d2)
-
+    
     # Euclidean distances 2 within 1
-
+    
     d1 = df %>%
       select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var))
-
+    
     d2 = df %>% select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var)) %>% summarise_if(is.numeric, mean, na.rm = T)
-
+    
     euc_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var))
-
+    
     var_matrix = colnames(euc_segment_2) %>% tail(n_values_var*2) %>% matrix(nrow = n_values_var)
     vector_to_sum = c()
     for (i in 1:n_values_var) {
-      vector_to_sum = c(vector_to_sum, (euc_segment_2[all_of(var_matrix[i,1])] - euc_segment_2[all_of(var_matrix[i,2])])^2)
+      vector_to_sum = c(vector_to_sum, (euc_segment_2[var_matrix[i,1]] - euc_segment_2[var_matrix[i,2]])^2)
     }
     euc_segment_2 = vector_to_sum %>% as.data.frame() %>% rowSums() %>% sqrt() %>% as.data.frame() %>% rename("distance" = ".") %>%
       bind_cols(d1, .) %>% select(!all_of(values_var)) %>%
       mutate(!!segments_var := segments_var_levels[2])
     rm(var_matrix, i, vector_to_sum, d1, d2)
-
+    
     # Incorporate Euclidean distances into the original data frame
-
+    
     euc_distances = bind_rows(euc_segment_1, euc_segment_2) %>% rename(euc_dist = distance); rm(euc_segment_1, euc_segment_2)
     df = df %>% left_join(euc_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var)); rm(euc_distances)
-
+    
   }
-
+  
   # Euclidean between
-
+  
   if (inter_group == TRUE) {
-
+    
     # Euclidean distances between
-
+    
     d1 = df %>%
       select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var))
-
+    
     d2 = df %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
       group_by_at(.vars = c(segments_var)) %>% summarise_if(is.numeric, mean, na.rm = T)
-
+    
     euc_segment = left_join(d1, d2, by = c(segments_var))
-
+    
     var_matrix = colnames(euc_segment) %>% tail(n_values_var*2) %>% matrix(nrow = n_values_var)
     vector_to_sum = c()
     for (i in 1:n_values_var) {
-      vector_to_sum = c(vector_to_sum, (euc_segment[all_of(var_matrix[i,1])] - euc_segment[all_of(var_matrix[i,2])])^2)
+      vector_to_sum = c(vector_to_sum, (euc_segment[var_matrix[i,1]] - euc_segment[var_matrix[i,2]])^2)
     }
     euc_segment = vector_to_sum %>% as.data.frame() %>% rowSums() %>% sqrt() %>% as.data.frame() %>% rename("distance" = ".") %>%
       bind_cols(d1, .) %>% select(!all_of(values_var))
     rm(var_matrix, i, vector_to_sum, d1, d2)
-
+    
     # Incorporate Euclidean distances into the original data frame
-
+    
     euc_segment = euc_segment %>% rename(euc_dist = distance)
     df = df %>% left_join(euc_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var)); rm(euc_segment)
-
+    
   }
-
+  
   # Mahalanobis within
-
+  
   if (inter_group == FALSE) {
-
+    
     # Mahalanobis distances 1 within 2
-
+    
     d1 = df %>%
       select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, unique_items_var, tests_var)) %>% nest()
-
+    
     d2 = df %>% select(all_of(c(subjects_var, segments_var, items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var)) %>% nest() %>%
       mutate(data = map(data, ~ select(.x, -all_of(items_var))))
-
+    
     mah_segment_1 = left_join(d1, d2, by = c(subjects_var, tests_var)) %>% rowwise() %>% filter(!is.null(data.y)) %>%
       mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
       ungroup() %>% select(-contains("data.")) %>%
       mutate(!!segments_var := segments_var_levels[1])
     rm(d1, d2)
-
+    
     # Mahalanobis distances 2 within 1
-
+    
     d1 = df %>%
       select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, unique_items_var, tests_var)) %>% nest()
-
+    
     d2 = df %>% select(all_of(c(subjects_var, segments_var, items_var, tests_var, values_var))) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var)) %>% nest() %>%
       mutate(data = map(data, ~ select(.x, -all_of(items_var))))
-
+    
     mah_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var)) %>% rowwise() %>% filter(!is.null(data.y)) %>%
       mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
       ungroup() %>% select(-contains("data.")) %>%
       mutate(!!segments_var := segments_var_levels[2])
     rm(d1, d2)
-
+    
     # Incorporate Mahalanobis distances into the original data frame
-
+    
     mah_distances = bind_rows(mah_segment_1, mah_segment_2) %>% rename(mah_dist = distance); rm(mah_segment_1, mah_segment_2)
     df = df %>% left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var)); rm(mah_distances)
-
+    
   }
-
+  
   # Mahalanobis between
-
+  
   if (inter_group == TRUE) {
-
+    
     # Mahalanobis distances between
-
+    
     d1 = df %>%
       select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
       filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var)) %>%
       group_by_at(.vars = c(subjects_var, segments_var, unique_items_var, tests_var)) %>% nest()
-
+    
     d2 = df %>% select(all_of(c(groups_var, segments_var, items_var, values_var))) %>%
       filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
       group_by_at(.vars = c(segments_var)) %>% nest() %>%
       mutate(data = map(data, ~ select(.x, -all_of(items_var))))
-
+    
     mah_segment = left_join(d1, d2, by = c(segments_var)) %>% rowwise() %>% filter(!is.null(data.y)) %>%
       mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
       ungroup() %>% select(-contains("data."))
     rm(d1, d2)
-
+    
     # Incorporate Mahalanobis distance into the original data frame
-
+    
     mah_segment = mah_segment %>% rename(mah_dist = distance)
     df = df %>% left_join(mah_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var)); rm(mah_segment)
-
+    
   }
   
   # Pillai within
