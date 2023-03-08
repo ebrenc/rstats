@@ -146,7 +146,7 @@ voweldist = function(x, inter_group = FALSE,
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var)) %>% nest() %>%
       mutate(data = map(data, ~ select(.x, -all_of(items_var)) %>% distinct())) %>%
-      filter(map_lgl(data, ~ ncol(.) <= nrow(.)))
+      filter(map_lgl(data, ~ ncol(.) < nrow(.)))
     
     mah_segment_1 = left_join(d1, d2, by = c(subjects_var, tests_var)) %>% rowwise() %>% filter(!is.null(data.y)) %>%
       mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
@@ -165,7 +165,7 @@ voweldist = function(x, inter_group = FALSE,
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var)) %>% nest() %>%
       mutate(data = map(data, ~ select(.x, -all_of(items_var)) %>% distinct())) %>%
-      filter(map_lgl(data, ~ ncol(.) <= nrow(.)))
+      filter(map_lgl(data, ~ ncol(.) < nrow(.)))
     
     mah_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var)) %>% rowwise() %>% filter(!is.null(data.y)) %>%
       mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
