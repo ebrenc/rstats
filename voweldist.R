@@ -16,24 +16,24 @@ voweldist = function(x, inter_group = FALSE,
   
   # Preliminary tasks
   
-  vars_to_char = c(segments_var, tests_var, groups_var, subjects_var, items_var, unique_items_var) %>% unique()
+  vars_to_char = c(segments_var, tests_var, groups_var, subjects_var, items_var, unique_items_var) %>% unique() %>% na.omit()
   df = df %>% 
     arrange(across(all_of(vars_to_char))) %>% 
     mutate(across(all_of(vars_to_char), as.character))
   rm(vars_to_char)
   
-  segments_var_levels = df %>% select(all_of(segments_var)) %>% unique() %>% unlist() %>% as.character()
-  tests_var_levels = df %>% select(all_of(tests_var)) %>% unique() %>% drop_na() %>% unlist() %>% as.character()
+  if (!is.na(segments_var)) {segments_var_levels = df %>% select(all_of(segments_var)) %>% unique() %>% unlist() %>% as.character()} else {segments_var_levels = 1}
+  if (!is.na(tests_var)) {tests_var_levels = df %>% select(all_of(tests_var)) %>% unique() %>% drop_na() %>% unlist() %>% as.character()} else {tests_var_levels = 1}
   n_values_var = values_var %>% length()
-  n_clusters_factors = length(segments_var_levels)*length(tests_var_levels)
+  if (!is.na(segments_var) & !is.na(tests_var)) {n_clusters_factors = length(segments_var_levels)*length(tests_var_levels)} else {n_clusters_factors = 1}
   
   # Filter out subjects with less than 3 cases in each combination of segments_var * tests_var
   
-  df_target_subjects = df %>% select(all_of(c(groups_var, subjects_var, tests_var, segments_var)))
+  df_target_subjects = df %>% select(all_of(c(groups_var, subjects_var, tests_var, segments_var) %>% na.omit()))
   if (inter_group == TRUE) {df_target_subjects = df_target_subjects %>% filter(!!as.name(groups_var) == learners_level)}
   subjects_out = c(
     df_target_subjects %>% distinct() %>% group_by_at(.vars = c(subjects_var)) %>% count() %>% filter(n < n_clusters_factors) %>% pluck(subjects_var),
-    df_target_subjects %>% group_by_at(.vars = c(subjects_var, tests_var, segments_var)) %>% count() %>% filter(n <= n_values_var) %>% pluck(subjects_var)
+    df_target_subjects %>% group_by_at(.vars = c(subjects_var, tests_var, segments_var) %>% na.omit()) %>% count() %>% filter(n <= n_values_var) %>% pluck(subjects_var)
   )
   if (length(subjects_out) > 0) {
     print(c("Subjects out: ", subjects_out))
@@ -106,14 +106,21 @@ voweldist = function(x, inter_group = FALSE,
     # Euclidean distances between
     
     d1 = df %>%
-      select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
+      select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
       filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var))
     
-    d2 = df %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
-      filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
-      group_by_at(.vars = c(segments_var)) %>% summarise_if(is.numeric, mean, na.rm = T)
-    
-    euc_segment = left_join(d1, d2, by = c(segments_var))
+    if (!is.na(segments_var)) {
+      d2 = df %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
+        filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
+        group_by_at(.vars = c(segments_var)) %>% 
+        summarise_if(is.numeric, mean, na.rm = T)
+      euc_segment = left_join(d1, d2, by = c(segments_var))
+    } else {
+      d2 = df %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+        filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
+        summarise_if(is.numeric, mean, na.rm = T)
+      euc_segment = bind_cols(d1, d2)
+    }
     
     var_matrix = colnames(euc_segment) %>% tail(n_values_var*2) %>% matrix(nrow = n_values_var)
     vector_to_sum = c()
@@ -127,7 +134,7 @@ voweldist = function(x, inter_group = FALSE,
     # Incorporate Euclidean distances into the original data frame
     
     euc_segment = euc_segment %>% rename(euc_dist = distance)
-    df = df %>% left_join(euc_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var)); rm(euc_segment)
+    df = df %>% left_join(euc_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()); rm(euc_segment)
     
   }
   
@@ -188,17 +195,29 @@ voweldist = function(x, inter_group = FALSE,
     
     # Mahalanobis distances between
     
-    d1 = df %>%
-      select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
-      filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var)) %>%
-      group_by_at(.vars = c(subjects_var, segments_var, unique_items_var, tests_var)) %>% nest()
+    if (!is.na(segments_var)) {
+      d1 = df %>%
+        select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+        filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var)) %>%
+        group_by_at(.vars = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()) %>% nest()
+      d2 = df %>% select(all_of(c(groups_var, segments_var, items_var, values_var))) %>%
+        filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
+        group_by_at(.vars = c(segments_var)) %>% nest() %>%
+        mutate(data = map(data, ~ select(.x, -all_of(items_var))))
+      mah_segment = left_join(d1, d2, by = c(segments_var))
+    } else {
+      d1 = df %>%
+        select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+        filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var)) %>%
+        group_by_at(.vars = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()) %>% nest() %>% rename(data.x = data)
+      d2 = df %>% select(all_of(c(groups_var, segments_var, items_var, values_var) %>% na.omit())) %>%
+        filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
+        nest(data.y = everything()) %>%
+        mutate(data.y = map(data.y, ~ select(.x, -all_of(items_var))))
+      mah_segment = bind_cols(d1, d2)
+    }
     
-    d2 = df %>% select(all_of(c(groups_var, segments_var, items_var, values_var))) %>%
-      filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
-      group_by_at(.vars = c(segments_var)) %>% nest() %>%
-      mutate(data = map(data, ~ select(.x, -all_of(items_var))))
-    
-    mah_segment = left_join(d1, d2, by = c(segments_var)) %>% rowwise() %>% filter(!is.null(data.y)) %>%
+    mah_segment = mah_segment %>% rowwise() %>% filter(!is.null(data.y)) %>%
       mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
       ungroup() %>% select(-contains("data."))
     rm(d1, d2)
@@ -206,7 +225,7 @@ voweldist = function(x, inter_group = FALSE,
     # Incorporate Mahalanobis distance into the original data frame
     
     mah_segment = mah_segment %>% rename(mah_dist = distance)
-    df = df %>% left_join(mah_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var)); rm(mah_segment)
+    df = df %>% left_join(mah_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()); rm(mah_segment)
     
   }
   
@@ -229,25 +248,45 @@ voweldist = function(x, inter_group = FALSE,
   
   if (inter_group == TRUE) {
     
-    d1 = df %>%
-      filter(!!as.name(groups_var) == learners_level) %>%
-      rename("groups_var" = all_of(groups_var)) %>%
-      select(all_of(c(subjects_var, tests_var, values_var, segments_var))) %>% group_by_at(.vars = c(tests_var, subjects_var, segments_var)) %>% nest()
+    vars_to_group = c(subjects_var, tests_var, values_var, segments_var) %>% na.omit()
+    if (!is.na(segments_var)) {
+      d1 = df %>%
+        filter(!!as.name(groups_var) == learners_level) %>%
+        rename("groups_var" = all_of(groups_var)) %>%
+        select(all_of(vars_to_group)) %>% group_by_at(.vars = vars_to_group) %>% nest()
+      d2 = df %>%
+        filter(!!as.name(groups_var) == natives_level) %>%
+        rename("groups_var" = all_of(groups_var)) %>%
+        select(all_of(c(values_var, segments_var))) %>% group_by_at(.vars = c(segments_var)) %>% nest()
+      pillai = left_join(d1, d2, by = c(segments_var))
+    } else {
+      d1 = df %>%
+        filter(!!as.name(groups_var) == learners_level) %>%
+        rename("groups_var" = all_of(groups_var)) %>%
+        select(all_of(vars_to_group))
+      if (length(vars_to_group) < ncol(d1)) {
+        d1 = d1 %>% group_by_at(.vars = vars_to_group) %>% nest() %>% rename(data.x = data)
+      } else {
+        d1 = d1 %>% group_by_at(.vars = subjects_var) %>% nest() %>% rename(data.x = data)
+      }
+      d2 = df %>%
+        filter(!!as.name(groups_var) == natives_level) %>%
+        rename("groups_var" = all_of(groups_var)) %>%
+        select(all_of(c(values_var))) %>% 
+        nest(data.y = everything())
+      pillai = bind_cols(d1, d2)
+    }
+    rm(vars_to_group)
     
-    d2 = df %>%
-      filter(!!as.name(groups_var) == natives_level) %>%
-      rename("groups_var" = all_of(groups_var)) %>%
-      select(all_of(c(values_var, segments_var))) %>% group_by_at(.vars = c(segments_var)) %>% nest()
-    
-    pillai = left_join(d1, d2, by = c(segments_var)) %>% 
+    pillai = pillai %>% 
       rename(learners = data.x, natives = data.y) %>% pivot_longer(cols = c(learners, natives), names_to = "groups_var", values_to = "data") %>% unnest(data) %>% 
-      group_by_at(.vars = c(subjects_var, tests_var, segments_var)) %>% nest() %>%
+      group_by_at(.vars = c(subjects_var, tests_var, segments_var) %>% na.omit()) %>% nest() %>%
       mutate(pillai = map(data, ~manova(formula = (.x %>% select(all_of(values_var)) %>% as.matrix()) ~ groups_var, data = .x) %>% 
                             summary() %>% pluck("stats") %>% as.data.frame() %>% rownames_to_column("factor") %>% 
                             filter(factor == "groups_var") %>% select(Pillai) %>% as.numeric()) %>% as.numeric()) %>%
       ungroup() %>% select(-c(data))
     
-    df = df %>% left_join(pillai, by = c(subjects_var, segments_var, tests_var)) %>% rename(pil_dist = pillai); rm(d1, d2, pillai)
+    df = df %>% left_join(pillai, by = c(subjects_var, segments_var, tests_var) %>% na.omit()) %>% rename(pil_dist = pillai); rm(d1, d2, pillai)
     
   }
   
