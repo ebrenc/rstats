@@ -248,12 +248,12 @@ voweldist = function(x, inter_group = FALSE,
   
   if (inter_group == TRUE) {
     
-    vars_to_group = c(subjects_var, tests_var, values_var, segments_var) %>% na.omit()
+    vars_to_group = c(subjects_var, tests_var, segments_var) %>% na.omit()
     if (!is.na(segments_var)) {
       d1 = df %>%
         filter(!!as.name(groups_var) == learners_level) %>%
         rename("groups_var" = all_of(groups_var)) %>%
-        select(all_of(vars_to_group)) %>% group_by_at(.vars = vars_to_group) %>% nest()
+        select(all_of(vars_to_group), values_var) %>% group_by_at(.vars = vars_to_group) %>% nest()
       d2 = df %>%
         filter(!!as.name(groups_var) == natives_level) %>%
         rename("groups_var" = all_of(groups_var)) %>%
