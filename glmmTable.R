@@ -169,7 +169,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
   
   term = term %>% mutate(order1 = str_count(combinations))
   term = term %>% mutate(order2 = str_arrange(combinations))
-  results.table = results.table %>% left_join(term %>% select(-combinations), by = "term", multiple = "all") %>% arrange(order1, order2) %>% select(-c(order1, order2))
+  results.table = results.table %>% left_join(term %>% select(-combinations), by = "term", relationship = "many-to-many") %>% arrange(order1, order2) %>% select(-c(order1, order2))
   results.table = results.table %>% distinct()
   rm(term, str_arrange, combinations)
   results.table = results.table %>% filter(!is.na(Chisq)) 
