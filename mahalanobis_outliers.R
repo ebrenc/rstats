@@ -13,8 +13,8 @@ mahalanobis_outliers = function(data, vars = NULL, group_by = NULL, chisq.prob =
   data$mah_chisq <- data$mah > threshold
   
   if (verbose) {
-    n_outliers = sum(data$mah > threshold)
-    n_rows = length(data$mah)
+    n_outliers = sum(data$mah > threshold, na.rm = TRUE)
+    n_rows = length(!is.na(data$mah))
     cat(n_outliers, "/", n_rows, "outliers", "\n")
     cat("Proportion:", n_outliers / n_rows, "\n")
     cat("Distance threshold:", threshold, "\n")
@@ -24,7 +24,7 @@ mahalanobis_outliers = function(data, vars = NULL, group_by = NULL, chisq.prob =
     data = data %>% 
       mutate(across({{vars_colnames}}, ~ if_else(mah_chisq, NA_real_, .))) %>%
       select(-c(mah, mah_chisq))
-    }
+  }
   
   return(data)
 }
