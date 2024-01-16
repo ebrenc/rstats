@@ -43,7 +43,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
       assign(x = str_c("number", cnumber), value = str_c("f", str_sub(c, cnumber, cnumber)) %>% parse(text = .) %>% eval())
       }; rm(cnumber)
     
-    if (str_c("emmeans(model, ~ ", number1, ")") %>% parse(text = .) %>% eval() %>% data.frame() %>% as_tibble() %>% select(all_of(number1)) %>% count() > 1) {
+    if (str_c("emmeans(model, ~ ", number1, ")") %>% parse(text = .) %>% eval() %>% data.frame() %>% as_tibble() %>% select(all_of(number1)) %>% dplyr::count() > 1) {
       
       lineofresults = str_c("emmeans(model, ~ ", number1)
       if (str_count(c) == 1) {lineofresults = str_c(lineofresults, ")")}
