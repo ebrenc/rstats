@@ -1,5 +1,5 @@
 
-glmmTable = function(model, path = "model.html", title = "Model", extract = FALSE) {
+glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   
   require(tidyverse); require(car)
   
@@ -41,7 +41,7 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
     
     for (cnumber in 1:str_count(c)) {
       assign(x = str_c("number", cnumber), value = str_c("f", str_sub(c, cnumber, cnumber)) %>% parse(text = .) %>% eval())
-      }; rm(cnumber)
+    }; rm(cnumber)
     
     if (str_c("emmeans(model, ~ ", number1, ")") %>% parse(text = .) %>% eval() %>% data.frame() %>% as_tibble() %>% select(all_of(number1)) %>% dplyr::count() > 1) {
       
@@ -180,73 +180,75 @@ glmmTable = function(model, path = "model.html", title = "Model", extract = FALS
     mutate(across(where(is.numeric), ~round(.x, digits = 3))) %>%
     mutate(across(contains("cohensd"), abs))
   
-  # Do the flextable
-  
-  require(flextable)
-  
-  set_flextable_defaults(font.family = "Arial", font.size = 9, digits = 3)
-  
-  number_of_columns = ncol(results.table)
-  number_of_fs = round((number_of_columns-4)/4)
-  
-  results = results.table %>% flextable() %>% theme_vanilla()
-  
-  results = results %>% 
-    colformat_num(j = "Df", digits = 0) %>%
-    merge_v(j = "term", target = c(1:4)) %>% 
-    bg(~ (p.Chisq < .1 & p.Chisq >= .05), ~ term + p.Chisq, bg = "#d7eef3") %>%
-    bg(~ p.Chisq < .05, ~ term + p.Chisq, bg = "#90ccde")
-  if(number_of_columns > 4) {results = results %>% merge_v(j = c(5:number_of_columns))}
-  
-  if (number_of_columns >= 7) {
+  if (!is.na(path)) {
+    # Do the flextable
     
-    for (f in 1:number_of_fs) {
-      f.p.value = str_c("f", f, ".p.value")
-      results = results %>% 
-        bg(i = (results$body$dataset[[f.p.value]] < .1 & results$body$dataset[[f.p.value]] >= .05), j = which(results$body$col_keys == f.p.value), bg = "#d7eef3") %>% 
-        bg(i = results$body$dataset[[f.p.value]] < .05, j = which(results$body$col_keys == f.p.value), bg = "#90ccde")
+    require(flextable)
+    
+    set_flextable_defaults(font.family = "Arial", font.size = 9, digits = 3)
+    
+    number_of_columns = ncol(results.table)
+    number_of_fs = round((number_of_columns-4)/4)
+    
+    results = results.table %>% flextable() %>% theme_vanilla()
+    
+    results = results %>% 
+      colformat_num(j = "Df", digits = 0) %>%
+      merge_v(j = "term", target = c(1:4)) %>% 
+      bg(~ (p.Chisq < .1 & p.Chisq >= .05), ~ term + p.Chisq, bg = "#d7eef3") %>%
+      bg(~ p.Chisq < .05, ~ term + p.Chisq, bg = "#90ccde")
+    if(number_of_columns > 4) {results = results %>% merge_v(j = c(5:number_of_columns))}
+    
+    if (number_of_columns >= 7) {
+      
+      for (f in 1:number_of_fs) {
+        f.p.value = str_c("f", f, ".p.value")
+        results = results %>% 
+          bg(i = (results$body$dataset[[f.p.value]] < .1 & results$body$dataset[[f.p.value]] >= .05), j = which(results$body$col_keys == f.p.value), bg = "#d7eef3") %>% 
+          bg(i = results$body$dataset[[f.p.value]] < .05, j = which(results$body$col_keys == f.p.value), bg = "#90ccde")
+      }
+      rm(f, f.p.value)
     }
-    rm(f, f.p.value)
-  }
-  
-  if (number_of_fs == 1) {
-    values = c("Model results", "", "", "", categorical_factor_names[1], "", "")
-  }
-  
-  if (number_of_fs > 1) {
-    values = c("Model results", "", "", "")
-    for (f in 1:length(categorical_factor_names)) {
-      values = c(values, categorical_factor_names[f], "", "", "")
+    
+    if (number_of_fs == 1) {
+      values = c("Model results", "", "", "", categorical_factor_names[1], "", "")
     }
-    rm(f)
+    
+    if (number_of_fs > 1) {
+      values = c("Model results", "", "", "")
+      for (f in 1:length(categorical_factor_names)) {
+        values = c(values, categorical_factor_names[f], "", "", "")
+      }
+      rm(f)
+    }
+    
+    ###
+    
+    for (alias in 1:number_of_columns) {
+      content = results$header$content$content$data[[alias]]$txt
+      if (content == "term") {results$header$content$content$data[[alias]]$txt = "Term"}
+      else if (content == "Chisq") {results$header$content$content$data[[alias]]$txt = "χ²"}
+      else if (content == "Df") {results$header$content$content$data[[alias]]$txt = "df"}
+      else if (content == "p.Chisq") {results$header$content$content$data[[alias]]$txt = "p"}
+      else if (grepl("insidelevel", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Levels"}
+      else if (grepl("contrast", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Contrast"}
+      else if (grepl("cohensd", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Coh.d"}
+      else if (grepl("p.value", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Sig"}
+      rm(content)
+    }; rm(alias, number_of_columns)
+    
+    results = results %>% add_header_row(values = values, top = TRUE); rm(values)
+    results = results %>% merge_at(i = 1, j = 1:4, part = "header")
+    if (number_of_fs == 1) {results = results %>% merge_at(i = 1, j = 5:7, part = "header")}
+    if (number_of_fs > 1) {for (f in 1:length(categorical_factor_names)) {results = results %>% merge_at(i = 1, j = (1:4)+4*f, part = "header")}; rm(f)}
+    
+    results = results %>% set_formatter_type(fmt_double="%.01f") %>% padding(padding = 4, part = "all") %>% autofit()
+    
+    rm(list = str_c("f", 1:number_of_fs))
+    rm(categorical_factor_names, factor_names, number_of_fs)
+    
+    results %>% save_as_html(path = path, title = title)
   }
-  
-  ###
-  
-  for (alias in 1:number_of_columns) {
-    content = results$header$content$content$data[[alias]]$txt
-    if (content == "term") {results$header$content$content$data[[alias]]$txt = "Term"}
-    else if (content == "Chisq") {results$header$content$content$data[[alias]]$txt = "χ²"}
-    else if (content == "Df") {results$header$content$content$data[[alias]]$txt = "df"}
-    else if (content == "p.Chisq") {results$header$content$content$data[[alias]]$txt = "p"}
-    else if (grepl("insidelevel", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Levels"}
-    else if (grepl("contrast", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Contrast"}
-    else if (grepl("cohensd", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Coh.d"}
-    else if (grepl("p.value", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Sig"}
-    rm(content)
-  }; rm(alias, number_of_columns)
-  
-  results = results %>% add_header_row(values = values, top = TRUE); rm(values)
-  results = results %>% merge_at(i = 1, j = 1:4, part = "header")
-  if (number_of_fs == 1) {results = results %>% merge_at(i = 1, j = 5:7, part = "header")}
-  if (number_of_fs > 1) {for (f in 1:length(categorical_factor_names)) {results = results %>% merge_at(i = 1, j = (1:4)+4*f, part = "header")}; rm(f)}
-  
-  results = results %>% set_formatter_type(fmt_double="%.01f") %>% padding(padding = 4, part = "all") %>% autofit()
-  
-  rm(list = str_c("f", 1:number_of_fs))
-  rm(categorical_factor_names, factor_names, number_of_fs)
-  
-  results %>% save_as_html(path = path, title = title)
   
   if (extract == TRUE) {return(results.table)}
   
