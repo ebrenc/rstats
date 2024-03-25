@@ -11,7 +11,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   require(emmeans)
   emm_options(lmerTest.limit = 10000, disable.pbkrtest = T, lmer.df = "satterthwaite", msg.interaction = F)
   
-  model_class = model %>% class()
+  model_class = suppressWarnings(class(model))
   if (model_class == "glmmTMB") {
     terms = attr(model$modelInfo$reTrms$cond$terms$fixed, "dataClasses") %>% enframe() %>% tail(-1)
   } else {
