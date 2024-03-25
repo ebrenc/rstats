@@ -13,7 +13,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   
   model_class = model %>% class()
   if (model_class == "glmmTMB") {
-    terms = attr(model0$modelInfo$reTrms$cond$terms$fixed, "dataClasses") %>% enframe() %>% tail(-1)
+    terms = attr(model$modelInfo$reTrms$cond$terms$fixed, "dataClasses") %>% enframe() %>% tail(-1)
   } else {
     terms = model %>% terms() %>% attr("term.labels") %>% str_subset("^[^:]+$") %>%
       sapply(., function(effect) {
