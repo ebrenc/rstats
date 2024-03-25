@@ -11,9 +11,18 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   require(emmeans)
   emm_options(lmerTest.limit = 10000, disable.pbkrtest = T, lmer.df = "satterthwaite", msg.interaction = F)
   
-  terms = attr(model$modelInfo$reTrms$cond$terms$fixed, "dataClasses") %>% enframe()
-  factor_names = terms %>% tail(-1) %>% pluck("name")
-  categorical_factor_names = terms %>% tail(-1) %>% filter(value %in% c("factor", "character")) %>% pluck("name")
+  model_class = model %>% class()
+  if (model_class == "glmmTMB") {
+    terms = attr(model0$modelInfo$reTrms$cond$terms$fixed, "dataClasses") %>% enframe() %>% tail(-1)
+  } else {
+    terms = model %>% terms() %>% attr("term.labels") %>% str_subset("^[^:]+$") %>%
+      sapply(., function(effect) {
+        class(model@frame[[effect]])
+      }) %>% enframe()
+  }
+  
+  factor_names = terms %>% pluck("name")
+  categorical_factor_names = terms %>% filter(value %in% c("factor", "character")) %>% pluck("name")
   non_categorical_factor_names = factor_names[!factor_names %in% categorical_factor_names]
   rm(terms)
   
