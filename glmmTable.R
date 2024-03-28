@@ -233,15 +233,15 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
     ###
     
     for (alias in 1:number_of_columns) {
-      content = results$header$content$content$data[[alias]]$txt
-      if (content == "term") {results$header$content$content$data[[alias]]$txt = "Term"}
-      else if (content == "Chisq") {results$header$content$content$data[[alias]]$txt = "χ²"}
-      else if (content == "Df") {results$header$content$content$data[[alias]]$txt = "df"}
-      else if (content == "p.Chisq") {results$header$content$content$data[[alias]]$txt = "p"}
-      else if (grepl("insidelevel", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Levels"}
-      else if (grepl("contrast", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Contrast"}
-      else if (grepl("cohensd", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Coh.d"}
-      else if (grepl("p.value", content, fixed = T)) {results$header$content$content$data[[alias]]$txt = "Sig"}
+      content = results$header$content$data[[alias]]$txt
+      if (content == "term") {results$header$content$data[[alias]]$txt = "Term"}
+      else if (content == "Chisq") {results$header$content$data[[alias]]$txt = "χ²"}
+      else if (content == "Df") {results$header$content$data[[alias]]$txt = "df"}
+      else if (content == "p.Chisq") {results$header$content$data[[alias]]$txt = "p"}
+      else if (grepl("insidelevel", content, fixed = T)) {results$header$content$data[[alias]]$txt = "Levels"}
+      else if (grepl("contrast", content, fixed = T)) {results$header$content$data[[alias]]$txt = "Contrast"}
+      else if (grepl("cohensd", content, fixed = T)) {results$header$content$data[[alias]]$txt = "Coh.d"}
+      else if (grepl("p.value", content, fixed = T)) {results$header$content$data[[alias]]$txt = "Sig"}
       rm(content)
     }; rm(alias, number_of_columns)
     
