@@ -250,7 +250,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
     if (number_of_fs == 1) {results = results %>% merge_at(i = 1, j = 5:7, part = "header")}
     if (number_of_fs > 1) {for (f in 1:length(categorical_factor_names)) {results = results %>% merge_at(i = 1, j = (1:4)+4*f, part = "header")}; rm(f)}
     
-    results = results %>% set_formatter_type(fmt_double="%.01f") %>% padding(padding = 4, part = "all") %>% autofit()
+    results = results %>% colformat_double(digits = 3) %>% padding(padding = 4, part = "all") %>% autofit()
     
     rm(list = str_c("f", 1:number_of_fs))
     rm(categorical_factor_names, factor_names, number_of_fs)
