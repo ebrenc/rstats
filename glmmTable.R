@@ -1,14 +1,12 @@
 
 glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   
-  require(tidyverse); require(car)
+  library(tidyverse); library(car); library(janitor)
   
   model.anova = car::Anova(model, type = c("II", "III", 2, 3), test.statistic = c("Chisq", "F")) %>%
-    tibble::rownames_to_column("term") %>% 
-    dplyr::rename("p.Chisq" = "Pr(>Chisq)") %>% 
-    select(term, Chisq, Df, p.Chisq)
+    data.frame() %>% janitor::clean_names() %>% tibble::rownames_to_column("term") %>% dplyr::rename(p_chisq = pr_chisq)
   
-  require(emmeans)
+  library(emmeans)
   emm_options(lmerTest.limit = 10000, disable.pbkrtest = T, lmer.df = "satterthwaite", msg.interaction = F)
   
   if (class(model) == "glmmTMB") {
@@ -82,6 +80,10 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
       cohensd = numeric(),
       combinations = character(),
       term = character())}
+    
+    if ("contrast1" %in% colnames(result) && !"contrast" %in% colnames(result)) {
+      result <- result %>% dplyr::rename(contrast = contrast1)
+    }
     
     assign(str_c("pair", c), result)
     
@@ -169,7 +171,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
     
     results.table = results.table %>% 
       full_join(model.anova, by = "term") %>% 
-      relocate(Chisq, Df, p.Chisq, .after = term)
+      relocate(chisq, df, p_chisq, .after = term)
     
   } else if (nrow(model.emmeans) == 0) {results.table = model.anova}
   
@@ -180,7 +182,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   results.table = results.table %>% left_join(term %>% select(-combinations), by = "term", relationship = "many-to-many") %>% arrange(order1, order2) %>% select(-c(order1, order2))
   results.table = results.table %>% distinct()
   rm(term, str_arrange, combinations)
-  results.table = results.table %>% filter(!is.na(Chisq)) 
+  results.table = results.table %>% filter(!is.na(chisq)) 
   
   # Repair rounding and effect sizes
   
@@ -191,7 +193,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   if (!is.na(path)) {
     # Do the flextable
     
-    require(flextable)
+    library(flextable)
     
     set_flextable_defaults(font.family = "Arial", font.size = 9, digits = 3)
     
@@ -201,10 +203,10 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
     results = results.table %>% flextable() %>% theme_vanilla()
     
     results = results %>% 
-      colformat_num(j = "Df", digits = 0) %>%
+      colformat_num(j = "df", digits = 0) %>%
       merge_v(j = "term", target = c(1:4)) %>% 
-      bg(~ (p.Chisq < .1 & p.Chisq >= .05), ~ term + p.Chisq, bg = "#d7eef3") %>%
-      bg(~ p.Chisq < .05, ~ term + p.Chisq, bg = "#90ccde")
+      bg(~ (p_chisq < .1 & p_chisq >= .05), ~ term + p_chisq, bg = "#d7eef3") %>%
+      bg(~ p_chisq < .05, ~ term + p_chisq, bg = "#90ccde")
     if(number_of_columns > 4) {results = results %>% merge_v(j = c(5:number_of_columns))}
     
     if (number_of_columns >= 7) {
@@ -235,9 +237,9 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
     for (alias in 1:number_of_columns) {
       content = results$header$content$data[[alias]]$txt
       if (content == "term") {results$header$content$data[[alias]]$txt = "Term"}
-      else if (content == "Chisq") {results$header$content$data[[alias]]$txt = "χ²"}
-      else if (content == "Df") {results$header$content$data[[alias]]$txt = "df"}
-      else if (content == "p.Chisq") {results$header$content$data[[alias]]$txt = "p"}
+      else if (content == "chisq") {results$header$content$data[[alias]]$txt = "χ²"}
+      else if (content == "df") {results$header$content$data[[alias]]$txt = "df"}
+      else if (content == "p_chisq") {results$header$content$data[[alias]]$txt = "p"}
       else if (grepl("insidelevel", content, fixed = T)) {results$header$content$data[[alias]]$txt = "Levels"}
       else if (grepl("contrast", content, fixed = T)) {results$header$content$data[[alias]]$txt = "Contrast"}
       else if (grepl("cohensd", content, fixed = T)) {results$header$content$data[[alias]]$txt = "Coh.d"}
