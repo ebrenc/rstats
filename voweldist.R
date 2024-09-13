@@ -110,7 +110,7 @@ voweldist = function(x, inter_group = FALSE,
       filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var))
     
     if (!is.na(segments_var)) {
-      d2 = xdata %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var))) %>%
+      d2 = xdata %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
         filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
         group_by_at(.vars = c(segments_var)) %>% 
         summarise_if(is.numeric, mean, na.rm = T)
