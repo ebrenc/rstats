@@ -1,10 +1,25 @@
-voweldist = function(x, inter_group = FALSE, 
-         segments_var,  # By now, the script works if this variable has only 2 levels
-         tests_var,  # By now, the script works if this variable has only 2 levels
+'''
+inter_group = FALSE,  # If true, calculates how different two groups produce a single segment
+segments_var,  # Which segmental contras do we have to measure? I.e., /æ/ vs. /ʌ/. This variable must have 2 levels only
+tests_var,  # This variable must have 2 levels only
+subjects_var,
+items_var,
+unique_items_var, # Combined with subjects_var, these variable(s) should allow us to uniquely identify each row of the data frame
+values_var, # You can put 2 or more variables here
+groups_var = NULL,  # This variable must have 2 levels only
+learners_level = NULL,
+natives_level = NULL
+'''
+
+voweldist = function(
+         x,
+         inter_group = FALSE,
+         segments_var,
+         tests_var,
          subjects_var,
          items_var,
-         unique_items_var, # Combined with subjects_var, these variable(s) should allow us to uniquely identify each linguistic production present in the data frame
-         values_var, # You can put 2 or more variables here
+         unique_items_var,
+         values_var,
          groups_var = NULL,
          learners_level = NULL,
          natives_level = NULL) {
@@ -51,10 +66,10 @@ voweldist = function(x, inter_group = FALSE,
     # Euclidean distances 1 within 2
     
     d1 = xdata %>%
-      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var))
     
-    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var) %>% na.omit()) %>% summarise_if(is.numeric, mean, na.rm = T)
     
@@ -73,10 +88,10 @@ voweldist = function(x, inter_group = FALSE,
     # Euclidean distances 2 within 1
     
     d1 = xdata %>%
-      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var))
     
-    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var) %>% na.omit()) %>% summarise_if(is.numeric, mean, na.rm = T)
     
@@ -95,7 +110,7 @@ voweldist = function(x, inter_group = FALSE,
     # Incorporate Euclidean distances into the original data frame
     
     euc_distances = bind_rows(euc_segment_1, euc_segment_2) %>% rename(euc_dist = distance); rm(euc_segment_1, euc_segment_2)
-    xdata = xdata %>% left_join(euc_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()); rm(euc_distances)
+    xdata = xdata %>% left_join(euc_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()); rm(euc_distances)
     
   }
   
@@ -106,17 +121,17 @@ voweldist = function(x, inter_group = FALSE,
     # Euclidean distances between
     
     d1 = xdata %>%
-      select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+      select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var))
     
     if (!is.na(segments_var)) {
-      d2 = xdata %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+      d2 = xdata %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
         filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
         group_by_at(.vars = c(segments_var)) %>% 
         summarise_if(is.numeric, mean, na.rm = T)
       euc_segment = left_join(d1, d2, by = c(segments_var))
     } else {
-      d2 = xdata %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+      d2 = xdata %>% select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
         filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
         summarise_if(is.numeric, mean, na.rm = T)
       euc_segment = bind_cols(d1, d2)
@@ -134,7 +149,7 @@ voweldist = function(x, inter_group = FALSE,
     # Incorporate Euclidean distances into the original data frame
     
     euc_segment = euc_segment %>% rename(euc_dist = distance)
-    xdata = xdata %>% left_join(euc_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()); rm(euc_segment)
+    xdata = xdata %>% left_join(euc_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()); rm(euc_segment)
     
   }
   
@@ -145,11 +160,11 @@ voweldist = function(x, inter_group = FALSE,
     # Mahalanobis distances 1 within 2
     
     d1 = xdata %>%
-      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var)) %>%
-      group_by_at(.vars = c(subjects_var, unique_items_var, tests_var) %>% na.omit()) %>% nest()
+      group_by_at(.vars = c(subjects_var, unique_items_var, tests_var) %>% na.omit() %>% unique()) %>% nest()
     
-    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, items_var, tests_var, values_var) %>% na.omit())) %>%
+    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var) %>% na.omit()) %>% nest() %>%
       mutate(data = map(data, ~ select(.x, -all_of(items_var)) %>% distinct())) %>%
@@ -165,11 +180,11 @@ voweldist = function(x, inter_group = FALSE,
     # Mahalanobis distances 2 within 1
     
     d1 = xdata %>%
-      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+      select(all_of(c(subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[2]) %>% select(!all_of(segments_var)) %>%
-      group_by_at(.vars = c(subjects_var, unique_items_var, tests_var) %>% na.omit()) %>% nest()
+      group_by_at(.vars = c(subjects_var, unique_items_var, tests_var) %>% na.omit() %>% unique()) %>% nest()
     
-    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, items_var, tests_var, values_var) %>% na.omit())) %>%
+    d2 = xdata %>% select(all_of(c(subjects_var, segments_var, items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
       filter(eval(parse(text = segments_var)) == segments_var_levels[1]) %>% select(!all_of(segments_var)) %>%
       group_by_at(.vars = c(subjects_var, tests_var) %>% na.omit()) %>% nest() %>%
       mutate(data = map(data, ~ select(.x, -all_of(items_var)) %>% distinct())) %>%
@@ -185,7 +200,7 @@ voweldist = function(x, inter_group = FALSE,
     # Incorporate Mahalanobis distances into the original data frame
     
     mah_distances = bind_rows(mah_segment_1, mah_segment_2) %>% rename(mah_dist = distance); rm(mah_segment_1, mah_segment_2)
-    xdata = xdata %>% left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()); rm(mah_distances)
+    xdata = xdata %>% left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()); rm(mah_distances)
     
   }
   
@@ -197,20 +212,20 @@ voweldist = function(x, inter_group = FALSE,
     
     if (!is.na(segments_var)) {
       d1 = xdata %>%
-        select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+        select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
         filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var)) %>%
-        group_by_at(.vars = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()) %>% nest()
-      d2 = xdata %>% select(all_of(c(groups_var, segments_var, items_var, values_var))) %>%
+        group_by_at(.vars = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()) %>% nest()
+      d2 = xdata %>% select(all_of(c(groups_var, segments_var, items_var, values_var) %>% na.omit() %>% unique())) %>%
         filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
         group_by_at(.vars = c(segments_var)) %>% nest() %>%
         mutate(data = map(data, ~ select(.x, -all_of(items_var))))
       mah_segment = left_join(d1, d2, by = c(segments_var))
     } else {
       d1 = xdata %>%
-        select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit())) %>%
+        select(all_of(c(groups_var, subjects_var, segments_var, unique_items_var, tests_var, values_var) %>% na.omit() %>% unique())) %>%
         filter(!!as.name(groups_var) == learners_level) %>% select(!all_of(groups_var)) %>%
         group_by_at(.vars = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()) %>% nest() %>% rename(data.x = data)
-      d2 = xdata %>% select(all_of(c(groups_var, segments_var, items_var, values_var) %>% na.omit())) %>%
+      d2 = xdata %>% select(all_of(c(groups_var, segments_var, items_var, values_var) %>% na.omit() %>% unique())) %>%
         filter(!!as.name(groups_var) == natives_level) %>% select(!all_of(groups_var)) %>%
         nest(data.y = everything()) %>%
         mutate(data.y = map(data.y, ~ select(.x, -all_of(items_var))))
@@ -225,7 +240,7 @@ voweldist = function(x, inter_group = FALSE,
     # Incorporate Mahalanobis distance into the original data frame
     
     mah_segment = mah_segment %>% rename(mah_dist = distance)
-    xdata = xdata %>% left_join(mah_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit()); rm(mah_segment)
+    xdata = xdata %>% left_join(mah_segment, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()); rm(mah_segment)
     
   }
   
