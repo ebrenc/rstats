@@ -1,15 +1,13 @@
-'''
-inter_group = FALSE,  # If true, calculates how different two groups produce a single segment
-segments_var,  # Which segmental contras do we have to measure? I.e., /æ/ vs. /ʌ/. This variable must have 2 levels only
-tests_var,  # This variable must have 2 levels only
-subjects_var,
-items_var,
-unique_items_var, # Combined with subjects_var, these variable(s) should allow us to uniquely identify each row of the data frame
-values_var, # You can put 2 or more variables here
-groups_var = NULL,  # This variable must have 2 levels only
-learners_level = NULL,
-natives_level = NULL
-'''
+# inter_group = FALSE  # If true, calculates how different two groups produce a single segment
+# segments_var  # Which segmental contras do we have to measure? I.e., /æ/ vs. /ʌ/. This variable must have 2 levels only
+# tests_var  # This variable must have 2 levels only
+# subjects_var
+# items_var
+# unique_items_var  # Combined with subjects_var, these variable(s) should allow us to uniquely identify each row of the data frame
+# values_var  # You can put 2 or more variables here
+# groups_var = NULL  # This variable must have 2 levels only
+# learners_level = NULL
+# natives_level = NULL
 
 voweldist = function(
          x,
