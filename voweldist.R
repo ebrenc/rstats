@@ -185,9 +185,9 @@ voweldist = function(
           rowwise() %>% filter(!is.null(data.y)) %>%
           mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
           ungroup() %>% select(-contains("data.")) %>%
-          mutate(!!segments_var := segments_var_levels[2])
+          mutate(!!segments_var := segments_var_levels[1])
       } else if (keep_subject_groupping == TRUE) {
-        mah_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
+        mah_segment_1 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
           mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
           ungroup() %>% select(-contains("data.")) %>%
           mutate(!!segments_var := segments_var_levels[1])
