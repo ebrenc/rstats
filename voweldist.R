@@ -11,6 +11,7 @@
 # calc_euc = TRUE
 # calc_mah = TRUE
 # calc_pil = TRUE
+# keep_subject_groupping = TRUE
 
 voweldist = function(
     x,
@@ -26,7 +27,8 @@ voweldist = function(
     natives_level = NULL,
     calc_euc = TRUE,
     calc_mah = TRUE,
-    calc_pil = TRUE) {
+    calc_pil = TRUE,
+    keep_subject_groupping = TRUE) {
   
   require(tidyverse)
   options(scipen=999)
@@ -178,10 +180,18 @@ voweldist = function(
         filter(map_lgl(data, ~ ncol(.) < nrow(.))) %>%
         group_by_at(.vars = c(subjects_var)) %>% mutate(n_tests = n()) %>% ungroup() %>% filter(n_tests == length(tests_var_levels)) %>% select(-n_tests)
       
-      mah_segment_1 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
-        mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
-        ungroup() %>% select(-contains("data.")) %>%
-        mutate(!!segments_var := segments_var_levels[1])
+      if (keep_subject_groupping == FALSE) {
+        mah_segment_1 = cross_join(d1 %>% rename(data.x = data), d2 %>% select(-c(Subject)) %>% rename(data.y = data)) %>%
+          rowwise() %>% filter(!is.null(data.y)) %>%
+          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          ungroup() %>% select(-contains("data.")) %>%
+          mutate(!!segments_var := segments_var_levels[2])
+      } else if (keep_subject_groupping == TRUE) {
+        mah_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
+          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          ungroup() %>% select(-contains("data.")) %>%
+          mutate(!!segments_var := segments_var_levels[1])
+      }
       rm(d1, d2)
       
       # Mahalanobis distances 2 within 1
@@ -198,10 +208,18 @@ voweldist = function(
         filter(map_lgl(data, ~ ncol(.) < nrow(.))) %>%
         group_by_at(.vars = c(subjects_var)) %>% mutate(n_tests = n()) %>% ungroup() %>% filter(n_tests == length(tests_var_levels)) %>% select(-n_tests)
       
-      mah_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
-        mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
-        ungroup() %>% select(-contains("data.")) %>%
-        mutate(!!segments_var := segments_var_levels[2])
+      if (keep_subject_groupping == FALSE) {
+        mah_segment_2 = cross_join(d1 %>% rename(data.x = data), d2 %>% select(-c(Subject)) %>% rename(data.y = data)) %>%
+          rowwise() %>% filter(!is.null(data.y)) %>%
+          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          ungroup() %>% select(-contains("data.")) %>%
+          mutate(!!segments_var := segments_var_levels[2])
+      } else if (keep_subject_groupping == TRUE) {
+        mah_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
+          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          ungroup() %>% select(-contains("data.")) %>%
+          mutate(!!segments_var := segments_var_levels[2])
+      }
       rm(d1, d2)
       
       # Incorporate Mahalanobis distances into the original data frame
