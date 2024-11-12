@@ -225,8 +225,11 @@ voweldist = function(
       # Incorporate Mahalanobis distances into the original data frame
       
       mah_distances = bind_rows(mah_segment_1, mah_segment_2) %>% rename(mah_dist = distance); rm(mah_segment_1, mah_segment_2)
-      xdata = xdata %>% left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()); rm(mah_distances)
-      
+      # xdata = xdata %>% left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()); rm(mah_distances)
+      xdata2 = xdata %>%
+        left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique())
+      xdata = xdata2 %>% group_by(across(-mah_dist)) %>% summarise(mah_dist = mah_dist %>% mean(na.rm = T)) %>% ungroup()
+      rm(mah_distances, xdata2)       
     }
     
     # Mahalanobis between
