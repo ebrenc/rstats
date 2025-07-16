@@ -88,6 +88,7 @@ voweldist = function(
         vector_to_sum = c(vector_to_sum, (euc_segment_1[var_matrix[i,1]] - euc_segment_1[var_matrix[i,2]])^2)
       }
       euc_segment_1 = vector_to_sum %>% as.data.frame() %>% rowSums() %>% sqrt() %>% as.data.frame() %>% rename("distance" = ".") %>%
+        mutate(distance = na_if(distance, 0)) %>%
         bind_cols(d1, .) %>% select(!all_of(values_var)) %>%
         mutate(!!segments_var := segments_var_levels[1])
       rm(var_matrix, i, vector_to_sum, d1, d2)
@@ -110,6 +111,7 @@ voweldist = function(
         vector_to_sum = c(vector_to_sum, (euc_segment_2[var_matrix[i,1]] - euc_segment_2[var_matrix[i,2]])^2)
       }
       euc_segment_2 = vector_to_sum %>% as.data.frame() %>% rowSums() %>% sqrt() %>% as.data.frame() %>% rename("distance" = ".") %>%
+        mutate(distance = na_if(distance, 0)) %>%
         bind_cols(d1, .) %>% select(!all_of(values_var)) %>%
         mutate(!!segments_var := segments_var_levels[2])
       rm(var_matrix, i, vector_to_sum, d1, d2)
@@ -150,6 +152,7 @@ voweldist = function(
         vector_to_sum = c(vector_to_sum, (euc_segment[var_matrix[i,1]] - euc_segment[var_matrix[i,2]])^2)
       }
       euc_segment = vector_to_sum %>% as.data.frame() %>% rowSums() %>% sqrt() %>% as.data.frame() %>% rename("distance" = ".") %>%
+        mutate(distance = na_if(distance, 0)) %>%
         bind_cols(d1, .) %>% select(!all_of(values_var))
       rm(var_matrix, i, vector_to_sum, d1, d2)
       
@@ -183,12 +186,12 @@ voweldist = function(
       if (keep_subject_groupping == FALSE) {
         mah_segment_1 = cross_join(d1 %>% rename(data.x = data), d2 %>% select(-c(Subject)) %>% rename(data.y = data)) %>%
           rowwise() %>% filter(!is.null(data.y)) %>%
-          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          mutate(distance = if (is.null(tryCatch(cov_obj <- suppressWarnings(MASS::cov.trob(data.y)), error = function(e) NULL)) || any(map_dbl(data.y, ~ sd(.x, na.rm = TRUE)) == 0)) NA_real_ else mahalanobis(data.x, center = cov_obj$center, cov = cov_obj$cov)) %>%
           ungroup() %>% select(-contains("data.")) %>%
           mutate(!!segments_var := segments_var_levels[1])
       } else if (keep_subject_groupping == TRUE) {
         mah_segment_1 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
-          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          mutate(distance = if (is.null(tryCatch(cov_obj <- suppressWarnings(MASS::cov.trob(data.y)), error = function(e) NULL)) || any(map_dbl(data.y, ~ sd(.x, na.rm = TRUE)) == 0)) NA_real_ else mahalanobis(data.x, center = cov_obj$center, cov = cov_obj$cov)) %>%
           ungroup() %>% select(-contains("data.")) %>%
           mutate(!!segments_var := segments_var_levels[1])
       }
@@ -211,12 +214,12 @@ voweldist = function(
       if (keep_subject_groupping == FALSE) {
         mah_segment_2 = cross_join(d1 %>% rename(data.x = data), d2 %>% select(-c(Subject)) %>% rename(data.y = data)) %>%
           rowwise() %>% filter(!is.null(data.y)) %>%
-          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          mutate(distance = if (is.null(tryCatch(cov_obj <- suppressWarnings(MASS::cov.trob(data.y)), error = function(e) NULL)) || any(map_dbl(data.y, ~ sd(.x, na.rm = TRUE)) == 0)) NA_real_ else mahalanobis(data.x, center = cov_obj$center, cov = cov_obj$cov)) %>%
           ungroup() %>% select(-contains("data.")) %>%
           mutate(!!segments_var := segments_var_levels[2])
       } else if (keep_subject_groupping == TRUE) {
         mah_segment_2 = left_join(d1, d2, by = c(subjects_var, tests_var) %>% na.omit()) %>% rowwise() %>% filter(!is.null(data.y)) %>%
-          mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+          mutate(distance = if (is.null(tryCatch(cov_obj <- suppressWarnings(MASS::cov.trob(data.y)), error = function(e) NULL)) || any(map_dbl(data.y, ~ sd(.x, na.rm = TRUE)) == 0)) NA_real_ else mahalanobis(data.x, center = cov_obj$center, cov = cov_obj$cov)) %>%
           ungroup() %>% select(-contains("data.")) %>%
           mutate(!!segments_var := segments_var_levels[2])
       }
@@ -228,7 +231,7 @@ voweldist = function(
       # xdata = xdata %>% left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique()); rm(mah_distances)
       xdata2 = xdata %>%
         left_join(mah_distances, by = c(subjects_var, segments_var, unique_items_var, tests_var) %>% na.omit() %>% unique())
-      xdata = xdata2 %>% group_by(across(-mah_dist)) %>% summarise(mah_dist = mah_dist %>% mean(na.rm = T)) %>% ungroup()
+      xdata = xdata2 %>% group_by(across(-mah_dist)) %>% summarise(mah_dist = mah_dist %>% mean(na.rm = T), .groups = "drop") %>% ungroup()
       rm(mah_distances, xdata2)       
     }
     
@@ -261,7 +264,7 @@ voweldist = function(
       }
       
       mah_segment = mah_segment %>% rowwise() %>% filter(!is.null(data.y)) %>%
-        mutate(distance = mahalanobis(data.x, MASS::cov.trob(data.y) %>% pluck("center"), MASS::cov.trob(data.y) %>% pluck("cov"))) %>%
+        mutate(distance = if (is.null(tryCatch(cov_obj <- suppressWarnings(MASS::cov.trob(data.y)), error = function(e) NULL)) || any(map_dbl(data.y, ~ sd(.x, na.rm = TRUE)) == 0)) NA_real_ else mahalanobis(data.x, center = cov_obj$center, cov = cov_obj$cov)) %>%
         ungroup() %>% select(-contains("data."))
       rm(d1, d2)
       
@@ -279,14 +282,17 @@ voweldist = function(
     if (inter_group == FALSE) {
       
       pillai = xdata %>%
-        rename("segments_var" = all_of(segments_var)) %>%
-        select(all_of(c(subjects_var, tests_var, values_var) %>% na.omit()), segments_var) %>% group_by_at(.vars = c(tests_var, subjects_var) %>% na.omit()) %>% nest() %>% 
-        mutate(pillai = map(data, ~manova(formula = (.x %>% select(all_of(values_var)) %>% as.matrix()) ~ segments_var, data = .x) %>% 
-                              summary() %>% pluck("stats") %>% as.data.frame() %>% rownames_to_column("factor") %>% 
-                              filter(factor == "segments_var") %>% select(Pillai) %>% as.numeric()) %>% as.numeric()) %>%
-        ungroup() %>% select(-c(data)) %>% rename(pil_dist = pillai)
-      xdata = xdata %>% left_join(pillai, by = c(subjects_var, tests_var) %>% na.omit()); rm(pillai)
+        rename("segments_var" = all_of(segments_var)) %>% select(all_of(c(subjects_var, tests_var, values_var) %>% na.omit()), segments_var) %>%
+        group_by_at(.vars = c(tests_var, subjects_var) %>% na.omit()) %>% nest() %>% 
+        mutate(pillai = map_dbl(data, ~ tryCatch({
+          stats = summary(manova(as.matrix(select(.x, all_of(values_var))) ~ segments_var, data = .x))$stats
+          df_stats = as.data.frame(stats) %>% rownames_to_column("factor")
+          df_stats %>% filter(factor == "segments_var") %>% pull(Pillai) %>% as.numeric()
+        }, error = function(e) NA_real_))) %>%
+        ungroup() %>% select(-data) %>% rename(pil_dist = pillai)
       
+      xdata = xdata %>% left_join(pillai, by = c(subjects_var, tests_var) %>% na.omit())
+      rm(pillai)
     }
     
     # Pillai between
@@ -341,6 +347,10 @@ voweldist = function(
   if (calc_euc == TRUE & calc_mah == TRUE & calc_pil == TRUE) {
     if (inter_group == FALSE) {xdata = xdata %>% rename(dist_wit_euc = euc_dist, dist_wit_mah = mah_dist, dist_wit_pil = pil_dist)}
     if (inter_group == TRUE) {xdata = xdata %>% rename(dist_bet_euc = euc_dist, dist_bet_mah = mah_dist, dist_bet_pil = pil_dist)}
+  }
+  if (calc_euc == TRUE & calc_mah == TRUE & calc_pil == TRUE) {
+    if (inter_group == FALSE) {xdata = xdata %>% mutate(dist_wit_mah = ifelse(is.nan(dist_wit_mah), NA_real_, dist_wit_mah))}
+    if (inter_group == TRUE) {xdata = xdata %>% mutate(dist_bet_mah = ifelse(is.nan(dist_bet_mah), NA_real_, dist_bet_mah))}
   }
   
   return(xdata)
