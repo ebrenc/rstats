@@ -332,10 +332,14 @@ voweldist = function(
       pillai = pillai %>% 
         rename(learners = data.x, natives = data.y) %>% pivot_longer(cols = c(learners, natives), names_to = "groups_var", values_to = "data") %>% unnest(data) %>% 
         group_by_at(.vars = c(subjects_var, tests_var, segments_var) %>% na.omit()) %>% nest() %>%
-        mutate(pillai = map(data, ~manova(formula = (.x %>% select(all_of(values_var)) %>% as.matrix()) ~ groups_var, data = .x) %>% 
-                              summary() %>% pluck("stats") %>% as.data.frame() %>% rownames_to_column("factor") %>% 
-                              filter(factor == "groups_var") %>% select(Pillai) %>% as.numeric()) %>% as.numeric()) %>%
-        ungroup() %>% select(-c(data))
+        mutate(pillai = map_dbl(data, function(df) {
+            if (length(unique(df$groups_var)) < 2) return(NA_real_)
+            out <- tryCatch({
+                summary(manova(as.matrix(df %>% select(all_of(values_var))) ~ groups_var, data = df))$stats["groups_var", "Pillai"]
+            }, error = function(e) NA_real_)
+                            out
+                            })) %>%
+            ungroup() %>% select(-c(data))
       
       xdata = xdata %>% left_join(pillai, by = c(subjects_var, segments_var, tests_var) %>% na.omit()) %>% rename(pil_dist = pillai); rm(d1, d2, pillai)
       
