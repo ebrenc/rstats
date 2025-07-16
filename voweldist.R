@@ -52,18 +52,18 @@ voweldist = function(
   
   df_target_subjects = xdata %>% select(all_of(c(groups_var, subjects_var, tests_var, segments_var) %>% na.omit()))
   if (inter_group == TRUE) {df_target_subjects = df_target_subjects %>% filter(!!as.name(groups_var) == learners_level)}
-  subjects_out = c(
-    df_target_subjects %>% distinct() %>% group_by_at(.vars = c(subjects_var)) %>% count() %>% filter(n < n_clusters_factors) %>% pluck(subjects_var),
-    df_target_subjects %>% group_by_at(.vars = c(subjects_var, tests_var, segments_var) %>% na.omit()) %>% count() %>% filter(n <= n_values_var) %>% pluck(subjects_var)
-  )
-  if (length(subjects_out) > 0) {
-    print(c("Subjects out: ", subjects_out))
-    `%notin%` = Negate(`%in%`)
-    # xdata = xdata %>% filter(eval(parse(text = subjects_var)) %notin% subjects_out)
-    xdata = xdata %>% filter(!!as.name(subjects_var) %notin% subjects_out)
-    rm(`%notin%`)
-  }
-  rm(df_target_subjects, subjects_out)
+  # subjects_out = c(
+  #   df_target_subjects %>% distinct() %>% group_by_at(.vars = c(subjects_var)) %>% count() %>% filter(n < n_clusters_factors) %>% pluck(subjects_var),
+  #   df_target_subjects %>% group_by_at(.vars = c(subjects_var, tests_var, segments_var) %>% na.omit()) %>% count() %>% filter(n <= n_values_var) %>% pluck(subjects_var)
+  # )
+  # if (length(subjects_out) > 0) {
+  #   print(c("Subjects out: ", subjects_out))
+  #   `%notin%` = Negate(`%in%`)
+  #   # xdata = xdata %>% filter(eval(parse(text = subjects_var)) %notin% subjects_out)
+  #   xdata = xdata %>% filter(!!as.name(subjects_var) %notin% subjects_out)
+  #   rm(`%notin%`)
+  # }
+  rm(df_target_subjects)
   
   # Euclidean within
   
