@@ -1,6 +1,6 @@
-# df1 = df %>% mahalanobis_outliers(vars = c(B0, B1), group_by = c(Subject, Vowel), chisq.prob = 0.99, verbose = T)
+# df1 = df %>% mahalanobis_outliers(vars = c(B0, B1), group_by = c(Subject, Vowel), chisq.prob = 0.99, verbose = T, act = T)
 
-mahalanobis_outliers = function(data, vars = NULL, group_by = NULL, chisq.prob = 0.99, act = FALSE, verbose = FALSE) {
+mahalanobis_outliers = function(data, vars = NULL, group_by = NULL, chisq.prob = 0.99, act = FALSE, verbose = TRUE) {
   require(tidyverse)
   
   vars_colnames = data %>% select({{vars}}) %>% colnames()
