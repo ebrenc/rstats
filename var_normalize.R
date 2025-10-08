@@ -1,10 +1,11 @@
 
 # devtools::source_url("https://raw.githubusercontent.com/ebrenc/rstats/main/var_normalize.R")
 
+# df = df %>% mutate(vot = VOT_ms %>% var_normalize(get_coefs = F))
 # norm = df2$ori %>% var_normalize()
 # denorm = var_denormalize(x = norm$norm, coefs = norm$coef, poly = norm$poly)
 
-var_normalize = function(x, poly_n = 3, get_coefs = TRUE) {
+var_normalize = function(x, poly_n = 3, get_coefs = FALSE) {
   library(tidyverse)
   if (!require(bestNormalize, quietly = TRUE)) { install.packages("bestNormalize", dependencies = TRUE) }
   library(bestNormalize)
