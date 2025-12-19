@@ -158,6 +158,13 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   rm(terms)
   
   n = length(factor_names)
+  
+  if (n < 1) {
+    results.table <- model.anova
+    if (extract == TRUE) return(results.table)
+    return(invisible(NULL))
+  }
+  
   for (f in 1:n) {assign(str_c("f", f), factor_names[f])}; rm(f)
   
   # -------------------------
