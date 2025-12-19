@@ -141,9 +141,20 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   terms <- terms_tbl
   rm(terms_tbl)
   
-  factor_names = terms %>% pluck("name")
-  categorical_factor_names = terms %>% filter(value %in% c("factor", "character")) %>% pluck("name")
-  non_categorical_factor_names = factor_names[!factor_names %in% categorical_factor_names]
+  factor_names <- terms %>% pluck("name")
+  
+  if ("value" %in% names(terms)) {
+    categorical_factor_names <-
+      terms %>%
+      filter(value %in% c("factor", "character")) %>%
+      pluck("name")
+  } else {
+    # fallback: assume all factors are categorical
+    categorical_factor_names <- factor_names
+  }
+  
+  non_categorical_factor_names <-
+    factor_names[!factor_names %in% categorical_factor_names]
   rm(terms)
   
   n = length(factor_names)
@@ -470,4 +481,4 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE) {
   
   if (extract == TRUE) {return(results.table)}
 }
-                            
+
