@@ -1,4 +1,14 @@
-glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust = "bonferroni") {
+glmmTable <- function(
+    model,
+    path = NA,
+    title = NULL,
+    extract = FALSE,
+    adjust = "bonferroni",
+    hide_irrelevant_minis = TRUE,
+    p_keep = 0.06,
+    p_fallback = 0.15,
+    p_main_sig = 0.05
+) {
   
   suppressPackageStartupMessages({
     library(tidyverse)
@@ -18,6 +28,13 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
   # -------------------------
   # 0) Helpers (robustness)
   # -------------------------
+  
+  if (is.null(title)) {
+    title <- tryCatch(
+      paste(deparse(formula(model)), collapse = ""),
+      error = function(e) "Model"
+    )
+  }
   
   is_glmmTMB <- inherits(model, "glmmTMB")
   is_lm      <- inherits(model, "lm") && !inherits(model, "glm")
@@ -109,6 +126,16 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
   if (!"chisq" %in% names(model.anova)) {
     model.anova <- model.anova %>% mutate(chisq = NA_real_)
   }
+  
+  anova_term_order <- model.anova %>%
+    dplyr::filter(!is.na(term)) %>%
+    dplyr::pull(term)
+  
+  # opcional: treu intercept/residuals si vols que tampoc entrin a l’ordre
+  anova_term_order <- anova_term_order[
+    anova_term_order != "(Intercept)" &
+      !tolower(anova_term_order) %in% c("residuals", "residual")
+  ]
   
   # -------------------------
   # 1) Identify categorical predictors robustly
@@ -320,6 +347,45 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
   }
   
   # -------------------------
+  # 3a) Optional: hide irrelevant mini-tables (pairwise blocks)
+  # -------------------------
+  
+  if (isTRUE(hide_irrelevant_minis)) {
+    
+    # attach term-level p_chisq to each pairwise row
+    model.emmeans <- model.emmeans %>%
+      left_join(model.anova %>% select(term, p_chisq), by = "term")
+    
+    model.emmeans <- model.emmeans %>%
+      group_by(term, contrastfield) %>%
+      group_modify(~{
+        df <- .x
+        
+        # robust guard
+        if (!"p.value" %in% names(df) || all(is.na(df$p.value))) {
+          return(df[0, , drop = FALSE])
+        }
+        
+        has_strict <- any(df$p.value < p_keep, na.rm = TRUE)
+        term_sig   <- any(df$p_chisq < p_main_sig, na.rm = TRUE)
+        
+        if (has_strict) {
+          df %>% filter(p.value < p_keep)
+        } else if (term_sig) {
+          df %>% filter(p.value < p_fallback)
+        } else {
+          df[0, , drop = FALSE]  # hide mini-table entirely
+        }
+      }) %>%
+      ungroup() %>%
+      select(-p_chisq)  # avoid duplicating later; model.anova will be joined anyway
+  }
+  
+  model.emmeans <- model.emmeans %>%
+    mutate(term = factor(term, levels = anova_term_order)) %>%
+    arrange(term)
+  
+  # -------------------------
   # 3b) Keep a readable directional label BUT also keep numeric columns
   # -------------------------
   
@@ -430,7 +496,7 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
   
   global_cols <- c("term", "chisq", "df", "p_chisq")
   
-  term_levels <- excel_long %>% distinct(term) %>% pull(term)
+  term_levels <- anova_term_order[anova_term_order %in% excel_long$term]
   
   factor_levels <- excel_long %>%
     mutate(term = factor(term, levels = term_levels)) %>%
@@ -512,6 +578,11 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
       set_header_labels(values = setNames(pretty_names, all_cols)) %>%
       add_header_row(values = top_values, colwidths = top_widths, top = TRUE) %>%
       merge_h(part = "header")
+    
+    # --- ombrejat suau de les files de capçalera (headings) ---
+    ft <- ft %>%
+      bg(i = 1, j = seq_len(ncol(excel_wide)), bg = "#e0e0e0", part = "header") %>%  # fila "Model results / Test"
+      bg(i = 2, j = seq_len(ncol(excel_wide)), bg = "#e0e0e0", part = "header")      # fila "Term χ² df p / Levels Contrast ..."
     
     # 2) MERGE GLOBALS "SEGONS term" (com el teu script original)
     #    - això fa que chisq/df/p_chisq s’estenguin cap avall dins de cada Term
@@ -612,7 +683,14 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
     ft <- ft %>%
       border(j = j_block_ends, border.right = thick_v, part = "all")
     
-    ft %>% save_as_html(path = path, title = title)
+    ft %>% save_as_html(
+      path  = path,
+      title = title,
+      css   = "
+      h1 { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; margin-bottom: 10px; }
+      body { font-family: Arial, sans-serif; }
+      "
+    )
   }
   
   if (extract) return(excel_wide)
