@@ -1,12 +1,11 @@
 glmmTable <- function(
     model,
     path = NA,
-    title = NULL,
     extract = FALSE,
     adjust = "bonferroni",
-    hide_irrelevant_minis = TRUE,
-    p_keep = 0.06,
-    p_fallback = 0.15,
+    hide_irrelevant_minis = FALSE,
+    p_keep = 0.08,
+    p_fallback = 0.20,
     p_main_sig = 0.05
 ) {
   
@@ -29,12 +28,10 @@ glmmTable <- function(
   # 0) Helpers (robustness)
   # -------------------------
   
-  if (is.null(title)) {
-    title <- tryCatch(
-      paste(deparse(formula(model)), collapse = ""),
-      error = function(e) "Model"
-    )
-  }
+  title <- tryCatch(
+    paste(deparse(formula(model)), collapse = ""),
+    error = function(e) "Model"
+  )
   
   is_glmmTMB <- inherits(model, "glmmTMB")
   is_lm      <- inherits(model, "lm") && !inherits(model, "glm")
@@ -579,10 +576,20 @@ glmmTable <- function(
       add_header_row(values = top_values, colwidths = top_widths, top = TRUE) %>%
       merge_h(part = "header")
     
+    # --- AFEGEIX EL TÍTOL COM A PRIMERA FILA DEL HEADER ---
+    ft <- ft %>%
+      add_header_row(values = title, colwidths = ncol(excel_wide), top = TRUE) %>%
+      merge_h(part = "header") %>%
+      bold(i = 1, part = "header") %>%
+      fontsize(i = 1, size = 12, part = "header") %>%
+      font(i = 1, fontname = "Arial", part = "header") %>%
+      align(i = 1, align = "left", part = "header") %>%
+      bg(i = 1, bg = "#f0f0f0", part = "header")
+    
     # --- ombrejat suau de les files de capçalera (headings) ---
     ft <- ft %>%
-      bg(i = 1, j = seq_len(ncol(excel_wide)), bg = "#e0e0e0", part = "header") %>%  # fila "Model results / Test"
-      bg(i = 2, j = seq_len(ncol(excel_wide)), bg = "#e0e0e0", part = "header")      # fila "Term χ² df p / Levels Contrast ..."
+      bg(i = 2, j = seq_len(ncol(excel_wide)), bg = "#e0e0e0", part = "header") %>%  # fila "Model results / Test"
+      bg(i = 3, j = seq_len(ncol(excel_wide)), bg = "#e0e0e0", part = "header")      # fila "Term χ² df p / Levels Contrast ..."
     
     # 2) MERGE GLOBALS "SEGONS term" (com el teu script original)
     #    - això fa que chisq/df/p_chisq s’estenguin cap avall dins de cada Term
@@ -683,14 +690,7 @@ glmmTable <- function(
     ft <- ft %>%
       border(j = j_block_ends, border.right = thick_v, part = "all")
     
-    ft %>% save_as_html(
-      path  = path,
-      title = title,
-      css   = "
-      h1 { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; margin-bottom: 10px; }
-      body { font-family: Arial, sans-serif; }
-      "
-    )
+    ft %>% save_as_html(path = path, title = ".")
   }
   
   if (extract) return(excel_wide)
