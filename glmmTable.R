@@ -115,7 +115,7 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
     tibble(name = names(dc), value = unname(dc))
   }, error = function(e) NULL)
   
-  if (is.null(terms_tbl) && is_glmmTMB) {
+  if (is_empty(terms_tbl) && is_glmmTMB) {
     terms_tbl <- tryCatch({
       attr(model$modelInfo$reTrms$cond$terms$fixed, "dataClasses") %>%
         enframe(name = "name", value = "value") %>%
@@ -123,7 +123,7 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
     }, error = function(e) NULL)
   }
   
-  if (is.null(terms_tbl)) {
+  if (is_empty(terms_tbl)) {
     if (!is.null(model_frame)) {
       terms_labels <- tryCatch(attr(terms(model), "term.labels"), error = function(e) character())
       main_terms   <- stringr::str_subset(terms_labels, "^[^:]+$")
