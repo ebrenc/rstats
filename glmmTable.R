@@ -46,13 +46,18 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
   
   safe_eff_size_tbl <- function(emm_obj, m) {
     tryCatch({
-      es <- eff_size(emm_obj, sigma = safe_sigma(m), edf = safe_df_resid(m))
-      as_tibble(summary(es)) %>%
-        select(contrast, cohensd = effect.size)
-    }, error = function(e) {
-      # Si falla, retornem taula buida amb les columnes esperades
-      tibble(contrast = character(), cohensd = numeric())
-    })
+      es  <- eff_size(emm_obj, sigma = safe_sigma(m), edf = safe_df_resid(m))
+      out <- as_tibble(summary(es))
+      
+      if ("contrast1" %in% names(out) && !"contrast" %in% names(out)) {
+        out <- out %>% rename(contrast = contrast1)
+      }
+      
+      out %>%
+        rename(cohensd = effect.size) %>%
+        select(-any_of(c("SE","df","lower.CL","upper.CL","t.ratio","z.ratio","p.value")))
+      # IMPORTANT: NO eliminis les columnes by
+    }, error = function(e) tibble(contrast = character(), cohensd = numeric()))
   }
   
   safe_anova <- function(m) {
@@ -252,13 +257,57 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
       res <- res %>% rename(contrast = contrast1)
     }
     
+    eff_tbl <- safe_eff_size_tbl(emm_obj, model)
+    
+    if ("contrast1" %in% names(eff_tbl) && !"contrast" %in% names(eff_tbl)) {
+      eff_tbl <- eff_tbl %>% rename(contrast = contrast1)
+    }
+    
+    # Columnes que apareixen tant a res com a eff_tbl (inclourà contrast + by vars)
+    join_by <- intersect(names(res), names(eff_tbl))
+    
+    # evita que s'hi coli estimate/SE/etc al join:
+    stats <- c("estimate","SE","df","t.ratio","z.ratio","p.value",
+               "lower.CL","upper.CL","asymp.LCL","asymp.UCL")
+    join_by <- setdiff(join_by, stats)
+    if (!"contrast" %in% join_by) join_by <- c("contrast", join_by)
+    
+    by_vars <- if (!is.na(iby)) strsplit(iby, "\\*")[[1]] else character()
+    
     res <- res %>%
-      left_join(safe_eff_size_tbl(emm_obj, model), by = "contrast") %>%
+      mutate(
+        insidelevel = if (length(by_vars) > 0 && all(by_vars %in% names(.))) {
+          pmap_chr(across(all_of(by_vars)), \(...) {
+            vals <- c(...)
+            paste(paste0(by_vars, "=", vals), collapse = ", ")
+          })
+        } else {
+          NA_character_
+        }
+      )
+    
+    n_before <- nrow(res)
+    
+    # Si l'eff_tbl no és usable per estrats, no fem join (evita matches incorrectes)
+    if (nrow(eff_tbl) == 0 || setequal(sort(names(eff_tbl)), sort(c("contrast","cohensd")))) {
+      res$cohensd <- NA_real_
+    } else {
+      res <- res %>% left_join(eff_tbl, by = join_by)
+    }
+    
+    # AQUEST mutate ha d'anar SEMPRE
+    res <- res %>%
       mutate(
         term = tt,
         contrastfield = cf,
         inside_by = iby
       )
+    
+    if (nrow(res) != n_before) {
+      warning("Join duplicated rows for spec: ", spec,
+              " | join_by = ", paste(join_by, collapse = ", "),
+              " | eff_tbl cols = ", paste(names(eff_tbl), collapse = ", "))
+    }
     
     model.emmeans <- bind_rows(model.emmeans, res)
   }
@@ -274,29 +323,47 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
   # 3b) Keep a readable directional label BUT also keep numeric columns
   # -------------------------
   
+  has_t <- "t.ratio" %in% names(model.emmeans)
+  has_z <- "z.ratio" %in% names(model.emmeans)
+  
   model.emmeans <- model.emmeans %>%
     mutate(df = round(df, 2)) %>%
     tidyr::separate(contrast, into = c("cfield.1", "cfield.2"), sep = " - ", remove = FALSE) %>%
     mutate(
       contrast_dir = case_when(
-        p.value < .05 & estimate > 0 ~ paste(cfield.1, " > ", cfield.2),
-        p.value < .05 & estimate < 0 ~ paste(cfield.2, " > ", cfield.1),
+        p.value < .05 & estimate > 0 ~ paste(cfield.1, " > ",  cfield.2),
+        p.value < .05 & estimate < 0 ~ paste(cfield.2, " > ",  cfield.1),
         p.value >= .05 & p.value < .1 & estimate > 0 ~ paste(cfield.1, " *> ", cfield.2),
         p.value >= .05 & p.value < .1 & estimate < 0 ~ paste(cfield.2, " *> ", cfield.1),
-        p.value >= .1 & estimate > 0 ~ paste(cfield.1, " = ", cfield.2),
-        p.value >= .1 & estimate < 0 ~ paste(cfield.2, " = ", cfield.1),
+        p.value >= .1 & estimate > 0 ~ paste(cfield.1, " ≈ ",  cfield.2),
+        p.value >= .1 & estimate < 0 ~ paste(cfield.2, " ≈ ",  cfield.1),
         TRUE ~ "not computable"
       ),
       estimate = abs(estimate),
-      t.ratio  = abs(t.ratio),
       cohensd  = abs(cohensd)
     ) %>%
-    select(
-      term, contrastfield, inside_by,
-      contrast_dir,
-      estimate, SE, df, t.ratio, p.value,
-      cohensd
-    )
+    { 
+      df <- .
+      if (has_t) {
+        df <- df %>%
+          mutate(
+            t.ratio = abs(.data[["t.ratio"]]),
+            t = abs(.data[["t.ratio"]])
+          )
+      } else {
+        df <- df %>% mutate(t = NA_real_)
+      }
+      if (has_z) {
+        df <- df %>%
+          mutate(
+            z.ratio = abs(.data[["z.ratio"]]),
+            z = abs(.data[["z.ratio"]])
+          )
+      } else {
+        df <- df %>% mutate(z = NA_real_)
+      }
+      df
+    }
   
   # -------------------------
   # 3c) Wide table per ANOVA term
@@ -316,99 +383,238 @@ glmmTable <- function(model, path = NA, title = "Model", extract = FALSE, adjust
   # 4) Output formatting (your original style, kept minimal)
   # -------------------------
   
-  results.table_clean <- results.table %>%
-    mutate(
-      across(
-        where(is.list),
-        ~ map(.x, \(df) df %>%
-                janitor::remove_empty("cols") %>%
-                transmute(
-                  insidelevel = dplyr::if_else("insidelevel" %in% names(df),
-                                               as.character(df$insidelevel),
-                                               NA_character_) |> (\(x) NULL)(),
-                  contrast_dir,
-                  d = abs(cohensd),
-                  t = abs(t.ratio),
-                  p = p.value
-                ))
-      )
-    )
-  
-  list_cols <- names(results.table_clean)[sapply(results.table_clean, is.list)]
-  
-  results.table_long <- reduce(
-    list_cols,
-    .init = results.table_clean,
-    .f = function(acc, col) {
-      tidyr::unnest(acc, cols = all_of(col), names_sep = ".")
+  # --- 1) normalitza qualsevol minitaula (o NULL) a un format estàndard ---
+  clean_nested_tests <- function(df) {
+    if (is.null(df) || !inherits(df, "data.frame") || nrow(df) == 0) {
+      return(tibble(
+        insidelevel  = character(),
+        contrast_dir = character(),
+        d            = numeric(),
+        t            = numeric(),
+        z            = numeric(),
+        p            = numeric()
+      ))
     }
-  )
+    
+    df <- janitor::remove_empty(df, "cols")
+    
+    tibble(
+      insidelevel  = if ("insidelevel" %in% names(df)) as.character(df$insidelevel) else NA_character_,
+      contrast_dir = if ("contrast_dir" %in% names(df)) df$contrast_dir else NA_character_,
+      d            = if ("cohensd" %in% names(df)) abs(df$cohensd) else NA_real_,
+      t            = if ("t.ratio" %in% names(df)) abs(df$t.ratio) else if ("t" %in% names(df)) df$t else NA_real_,
+      z            = if ("z.ratio" %in% names(df)) abs(df$z.ratio) else if ("z" %in% names(df)) df$z else NA_real_,
+      p            = if ("p.value" %in% names(df)) df$p.value else NA_real_
+    )
+  }
+  
+  # --- 2) results.table (nested) -> excel_long (tidy) ---
+  excel_long <- results.table %>%
+    mutate(across(where(is.list), ~ purrr::map(.x, clean_nested_tests))) %>%
+    tidyr::pivot_longer(where(is.list), names_to = "contrastfield", values_to = "tests") %>%
+    tidyr::unnest(tests, keep_empty = TRUE) %>%
+    filter(!is.na(contrast_dir) & !is.na(p)) %>%
+    mutate(.stat = dplyr::coalesce(t, z)) %>%
+    select(term, chisq, df, p_chisq, contrastfield,
+           insidelevel, contrast_dir, d, t, z, p, .stat)
+  
+  # decideix quin estadístic tens (mirant les columnes disponibles al teu excel_long actual)
+  stat_name <- if ("t" %in% names(excel_long) && any(!is.na(excel_long$t))) "t" else "z"
+  
+  excel_long <- excel_long %>%
+    mutate(.stat = dplyr::coalesce(t, z)) %>%
+    select(-any_of(c("t","z"))) %>%
+    rename(!!stat_name := .stat)
+  
+  # --- 3) excel_long -> excel_wide (real wide per Excel) + ordre columnes ---
+  
+  global_cols <- c("term", "chisq", "df", "p_chisq")
+  
+  term_levels <- excel_long %>% distinct(term) %>% pull(term)
+  
+  factor_levels <- excel_long %>%
+    mutate(term = factor(term, levels = term_levels)) %>%
+    arrange(term) %>%
+    distinct(contrastfield) %>%
+    pull(contrastfield)
+  
+  measures_pref <- c("insidelevel", "contrast_dir", "d", "t", "z", "p")
+  measures <- intersect(measures_pref, names(excel_long))
+  
+  excel_wide <- excel_long %>%
+    mutate(term = factor(term, levels = term_levels)) %>%
+    group_by(term, contrastfield) %>%
+    arrange(insidelevel, contrast_dir, .by_group = TRUE) %>%
+    mutate(row_id = row_number()) %>%
+    ungroup() %>%
+    pivot_wider(
+      id_cols    = c(term, chisq, df, p_chisq, row_id),
+      names_from = contrastfield,
+      values_from = all_of(measures),
+      names_glue = "{contrastfield}.{.value}"   # <<< CLAU: factor.mesura
+    ) %>%
+    arrange(term, row_id) %>%
+    select(-row_id)
+  
+  wide_cols <- purrr::map(factor_levels, \(f) paste(f, measures, sep = ".")) %>%
+    unlist(use.names = FALSE) %>%
+    intersect(names(excel_wide))
+  
+  excel_wide <- excel_wide %>%
+    select(all_of(global_cols), all_of(wide_cols))
+  
+  # -------------------------
+  # 5) Flextable
+  # -------------------------
   
   if (!is.na(path)) {
     
     library(flextable)
+    library(officer)
     
     set_flextable_defaults(font.family = "Arial", font.size = 9, digits = 3)
     
-    global_cols <- c("term", "chisq", "df", "p_chisq")
-    all_cols    <- names(results.table_long)
+    global_cols   <- c("term", "chisq", "df", "p_chisq")
+    all_cols      <- names(excel_wide)
+    detail_cols   <- setdiff(all_cols, global_cols)
     
-    # detecta prefixos (abans del punt) que NO són globals
-    detail_cols <- setdiff(all_cols, global_cols)
-    prefixes <- detail_cols %>%
-      str_extract("^[^.]+") %>%
-      unique()
+    # prefixos (Factor) per fer el header superior
+    prefixes <- str_extract(detail_cols, "^[^.]+") %>% unique()
+    prefix_ncols <- vapply(
+      prefixes,
+      function(p) sum(str_detect(detail_cols, paste0("^", p, "\\."))),
+      numeric(1)
+    )
     
-    # quantes columnes té cada prefix (en l'ordre en què apareixen)
-    prefix_ncols <- vapply(prefixes, function(p) sum(str_detect(detail_cols, paste0("^", p, "\\."))), numeric(1))
+    top_values <- c("Model results", prefixes)
+    top_widths <- c(length(global_cols), as.integer(prefix_ncols))
     
-    # Header superior (agrupació)
-    top_values   <- c("Model results", prefixes)
-    top_widths   <- c(length(global_cols), as.integer(prefix_ncols))
-    
+    # noms "bonics"
     pretty_names <- all_cols
-    
-    # globals (bonics)
     pretty_names[pretty_names == "term"]    <- "Term"
     pretty_names[pretty_names == "chisq"]   <- "χ²"
     pretty_names[pretty_names == "df"]      <- "df"
     pretty_names[pretty_names == "p_chisq"] <- "p"
     
-    # subheaders curts (sense prefix)
-    pretty_names <- ifelse(
-      all_cols %in% global_cols,
-      pretty_names,
-      sub("^[^.]+\\.", "", all_cols)  # treu "group." / "phone." / etc.
-    )
+    pretty_names <- ifelse(all_cols %in% global_cols, pretty_names, sub("^[^.]+\\.", "", all_cols))
     
-    # i ara canvia noms interns a labels APA
     pretty_names <- pretty_names %>%
       str_replace("^insidelevel$", "Levels") %>%
       str_replace("^contrast_dir$", "Contrast") %>%
       str_replace("^d$", "d") %>%
       str_replace("^t$", "t") %>%
+      str_replace("^z$", "z") %>%
       str_replace("^p$", "p")
     
-    # Ara crea la flextable
-    ft <- flextable(results.table_long, col_keys = all_cols) %>%
+    # 1) crea flextable DIRECTAMENT des de excel_wide (manté numèrics!)
+    ft <- flextable(excel_wide, col_keys = all_cols) %>%
       theme_vanilla() %>%
       set_header_labels(values = setNames(pretty_names, all_cols)) %>%
       add_header_row(values = top_values, colwidths = top_widths, top = TRUE) %>%
-      merge_h(part = "header") %>%
-      colformat_double(digits = 3) %>%
-      colformat_num(j = "df", digits = 0) %>%
-      merge_v(j = global_cols) %>%
-      bg(~ (p_chisq < .1 & p_chisq >= .05), j = c("term","p_chisq"), bg = "#d7eef3") %>%
-      bg(~ p_chisq < .05,                  j = c("term","p_chisq"), bg = "#90ccde") %>%
+      merge_h(part = "header")
+    
+    # 2) MERGE GLOBALS "SEGONS term" (com el teu script original)
+    #    - això fa que chisq/df/p_chisq s’estenguin cap avall dins de cada Term
+    #    - i MAI no es barregin entre termes diferents, encara que tinguin el mateix número
+    ft <- ft %>%
+      merge_v(j = "term", target = c("chisq", "df", "p_chisq"), part = "body") %>%
+      merge_v(j = "term", part = "body")
+    
+    # 3) format numèric (sense convertir a text)
+    #    - globals:
+    ft <- ft %>%
+      colformat_double(j = "chisq", digits = 3, na_str = "") %>%
+      colformat_num(j = "df", digits = 0, na_str = "") %>%
+      colformat_double(j = "p_chisq", digits = 3, na_str = "")
+    
+    #    - detalls (numèrics) amb 3 decimals i NA buit
+    num_detail <- detail_cols[vapply(excel_wide[detail_cols], is.numeric, logical(1))]
+    if (length(num_detail) > 0) {
+      ft <- ft %>% colformat_double(j = num_detail, digits = 3, na_str = "")
+    }
+    
+    ft <- ft %>%
       padding(padding = 4, part = "all") %>%
       autofit()
     
-    p_cols <- grep("\\.p$", names(results.table_long), value = TRUE)
-    if (length(p_cols) > 0) { ft <- ft %>% merge_v(j = p_cols) }
+    # 4) colors globals (com abans)
+    ft <- ft %>%
+      bg(~ (p_chisq < .1 & p_chisq >= .05), j = c("term", "p_chisq"), bg = "#d7eef3") %>%
+      bg(~ p_chisq < .05,                  j = c("term", "p_chisq"), bg = "#90ccde")
+    
+    # 5) colors també per a les p de les minitaules (totes les columnes que acaben en ".p")
+    p_detail_cols <- grep("\\.p$", detail_cols, value = TRUE)
+    if (length(p_detail_cols) > 0) {
+      for (pc in p_detail_cols) {
+        # important: funciona encara que hi hagi NA
+        ft <- ft %>%
+          bg(i = which(!is.na(excel_wide[[pc]]) & excel_wide[[pc]] < .1 & excel_wide[[pc]] >= .05),
+             j = pc, bg = "#d7eef3") %>%
+          bg(i = which(!is.na(excel_wide[[pc]]) & excel_wide[[pc]] < .05),
+             j = pc, bg = "#90ccde")
+      }
+    }
+    
+    # 6) treu les ratlles internes a cel·les buides (sense mergejar-les)
+    transparent <- fp_border(color = "transparent", width = 0)
+    
+    for (j in detail_cols) {
+      x <- excel_wide[[j]]
+      i_empty <- if (is.numeric(x)) which(is.na(x)) else which(is.na(x) | x == "")
+      if (length(i_empty) > 0) {
+        ft <- border(ft, i = i_empty, j = j, border.top = transparent, part = "body")
+        ft <- border(ft, i = i_empty, j = j, border.bottom = transparent, part = "body")
+      }
+    }
+    
+    term_breaks <- which(
+      excel_wide$term != dplyr::lag(excel_wide$term)
+    )
+    
+    thick_border <- fp_border(color = "black", width = 2)
+    
+    ft <- ft %>%
+      border(
+        i = term_breaks,
+        j = seq_len(ncol(excel_wide)),
+        border.top = thick_border,
+        part = "body"
+      )
+    
+    # --- separadors gruixuts verticals (blocs) ---
+    thick_v <- fp_border(color = "black", width = 2)
+    
+    # columnes globals i de detall (ja les tens abans)
+    global_cols <- c("term", "chisq", "df", "p_chisq")
+    all_cols    <- names(excel_wide)
+    detail_cols <- setdiff(all_cols, global_cols)
+    
+    # 1) separador gruixut després de p_chisq
+    j_after_p <- match("p_chisq", all_cols)
+    
+    ft <- ft %>%
+      border(j = j_after_p, border.right = thick_v, part = "all")
+    
+    # 2) separadors gruixuts entre minitaules (entre blocs de factors)
+    #    - detecta prefixos (factor) en l'ordre en què apareixen a excel_wide
+    prefixes <- stringr::str_extract(detail_cols, "^[^.]+") %>% unique()
+    
+    # per a cada prefix, troba l'última columna del seu bloc
+    last_col_each_block <- purrr::map_chr(prefixes, \(p) {
+      cols_p <- detail_cols[stringr::str_detect(detail_cols, paste0("^", p, "\\."))]
+      dplyr::last(cols_p)
+    })
+    
+    # índexs d'aquestes columnes
+    j_block_ends <- match(last_col_each_block, all_cols)
+    
+    # aplica el border dret gruixut a finals de bloc
+    ft <- ft %>%
+      border(j = j_block_ends, border.right = thick_v, part = "all")
     
     ft %>% save_as_html(path = path, title = title)
   }
   
-  if (extract) return(results.table_long)
+  if (extract) return(excel_wide)
   invisible(NULL)
 }
