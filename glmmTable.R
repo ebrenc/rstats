@@ -3,8 +3,12 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
   library(tidyverse); library(car); library(janitor)
   library(emmeans)
   
-  emm_options(lmerTest.limit = 10000, disable.pbkrtest = TRUE,
-              lmer.df = "satterthwaite", msg.interaction = FALSE)
+  emm_options(
+    lmerTest.limit = 10000,
+    disable.pbkrtest = TRUE,
+    lmer.df = "satterthwaite",
+    msg.interaction = FALSE
+  )
   
   # -------------------------
   # 0) Helpers (robustness)
@@ -16,6 +20,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
   is_lmer    <- inherits(model, "lmerMod")
   is_glmer   <- inherits(model, "glmerMod")
   
+  # robust model frame (avoid @)
   model_frame <- tryCatch(
     model.frame(model),
     error = function(e) {
@@ -46,6 +51,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     as.numeric(out)
   }
   
+  # robust car::Anova call: try several settings
   safe_anova <- function(m) {
     test_try <- list(
       if (is_lm) "F" else NULL,
@@ -53,7 +59,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
       c("Chisq", "F"),
       "F",
       "Chisq"
-    ) %>% compact()
+    ) %>% purrr::compact()
     
     for (ts in test_try) {
       out <- tryCatch({
@@ -70,6 +76,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
   
   model.anova <- safe_anova(model)
   
+  # pick whatever p-value column exists and rename to p_chisq
   p_candidates <- c("pr_chisq", "pr_f", "pr_gt_chisq", "pr_gt_f", "p")
   p_col <- p_candidates[p_candidates %in% names(model.anova)][1]
   if (!is.na(p_col)) {
@@ -78,6 +85,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     model.anova <- model.anova %>% mutate(p_chisq = NA_real_)
   }
   
+  # standardize statistic column name to chisq if needed
   if (!"chisq" %in% names(model.anova)) {
     f_candidates <- c("f", "f_value", "statistic")
     f_col <- f_candidates[f_candidates %in% names(model.anova)][1]
@@ -109,6 +117,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     }, error = function(e) NULL)
   }
   
+  # Fallback: derive from model_frame
   if (is.null(terms_tbl)) {
     if (!is.null(model_frame)) {
       terms_labels <- tryCatch(attr(terms(model), "term.labels"), error = function(e) character())
@@ -123,26 +132,42 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     }
   }
   
-  factor_names <- terms_tbl %>% pluck("name")
+  # --- FIX: ensure columns exist ---
+  if (!"name" %in% names(terms_tbl))  terms_tbl$name  <- character()
+  if (!"value" %in% names(terms_tbl)) terms_tbl$value <- NA_character_
+  
+  factor_names <- terms_tbl %>% dplyr::pull(name) %>% unique()
   
   categorical_factor_names <- terms_tbl %>%
-    filter(value %in% c("factor", "character")) %>%
-    pluck("name")
+    dplyr::filter(.data$value %in% c("factor", "character")) %>%
+    dplyr::pull(name) %>%
+    unique()
   
-  non_categorical_factor_names <- factor_names[!factor_names %in% categorical_factor_names]
+  non_categorical_factor_names <- setdiff(factor_names, categorical_factor_names)
   
-  # Si no hi ha factors categòrics, retornem ANOVA
+  # If no categorical factors: return ANOVA only
   if (length(categorical_factor_names) < 1) {
     results.table <- model.anova
-    if (extract == TRUE) return(results.table)
+    if (extract) return(results.table)
     return(invisible(NULL))
+  }
+  
+  # -------------------------
+  # 1b) Drop unused levels in model_frame (critical for pairwise)
+  # -------------------------
+  if (!is.null(model_frame)) {
+    for (v in categorical_factor_names) {
+      if (v %in% names(model_frame)) {
+        if (is.factor(model_frame[[v]])) model_frame[[v]] <- droplevels(model_frame[[v]])
+        if (is.character(model_frame[[v]])) model_frame[[v]] <- factor(model_frame[[v]]) %>% droplevels()
+      }
+    }
   }
   
   # -------------------------
   # 2) Terms to contrast = ANOVA terms (categorical only)
   # -------------------------
   
-  # termes ANOVA (sense Intercept / Residuals si apareixen)
   anova_terms <- model.anova %>%
     dplyr::filter(!is.na(term)) %>%
     dplyr::pull(term) %>%
@@ -151,9 +176,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
   anova_terms <- anova_terms[anova_terms != "(Intercept)"]
   anova_terms <- anova_terms[!tolower(anova_terms) %in% c("residuals", "residual")]
   
-  # helper: variables d’un terme (main o interacció)
   split_term_vars <- function(term) {
-    # car::Anova sol usar ":" per interaccions; si apareix "*" el normalitzem
     term <- stringr::str_replace_all(term, fixed("*"), ":")
     unlist(stringr::str_split(term, fixed(":")))
   }
@@ -168,35 +191,39 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     
     vars <- split_term_vars(tt)
     
-    # només si TOT el terme és categòric (inclou interaccions)
+    # only if ALL variables in this ANOVA term are categorical
     if (!all(vars %in% categorical_factor_names)) next
     
-    # formula: ~ A  o ~ A:B o ~ A:B:C ...
+    # emmeans formula: ~ A  or ~ A:B etc.
     fml <- stats::as.formula(paste0("~ ", paste(vars, collapse = ":")))
     
-    # prova de computabilitat: emmeans ha de retornar almenys 2 files
-    emm_obj <- tryCatch(emmeans::emmeans(model, fml), error = function(e) NULL)
+    # compute emmeans (try to force use of the same data)
+    emm_obj <- tryCatch(
+      emmeans::emmeans(model, fml),
+      error = function(e) NULL
+    )
     if (is.null(emm_obj)) next
     
     emm_df <- tryCatch(as.data.frame(emm_obj), error = function(e) NULL)
     if (is.null(emm_df) || nrow(emm_df) < 2) next
     
+    # pairs
     pair_df <- tryCatch({
-      emmeans::pairs(emm_obj, adjust = "bonferroni") %>%
+      emmeans::pairs(emm_obj, adjust = adjust) %>%
         summary() %>%
         as.data.frame()
     }, error = function(e) NULL)
     
     if (is.null(pair_df) || nrow(pair_df) == 0) next
     
-    res <- pair_df %>%
-      tibble::as_tibble()
+    res <- pair_df %>% tibble::as_tibble()
     
-    # assegura nom de columna contrast
+    # standardize column name
     if ("contrast1" %in% names(res) && !"contrast" %in% names(res)) {
       res <- res %>% dplyr::rename(contrast = contrast1)
     }
     
+    # Attach term metadata + effect size (one per term)
     res <- res %>%
       dplyr::mutate(
         term = tt,
@@ -207,18 +234,17 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     model.emmeans <- dplyr::bind_rows(model.emmeans, res)
   }
   
-  # si no hi ha contrasts, retornem com abans
+  # If no contrasts: return ANOVA only
   if (nrow(model.emmeans) == 0) {
     results.table <- model.anova
-    if (extract == TRUE) return(results.table)
+    if (extract) return(results.table)
     return(invisible(NULL))
   }
   
   # -------------------------
-  # 3b) Format contrasts
+  # 3b) Format contrasts (keep both raw + directional label)
   # -------------------------
   
-  # Afegeixo una columna "contrast_dir" amb >, =, *> etc,
   model.emmeans <- model.emmeans %>%
     dplyr::mutate(df = round(df, 2)) %>%
     tidyr::separate(contrast, into = c("cfield.1","cfield.2"), sep = " - ", remove = FALSE) %>%
@@ -241,7 +267,7 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     )
   
   # -------------------------
-  # 3c) Wide table: one block per ANOVA term (contrastfield)
+  # 3c) Wide table: one block per ANOVA term
   # -------------------------
   
   results.table <- model.emmeans %>%
@@ -250,37 +276,39 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
     dplyr::full_join(model.anova, by = "term") %>%
     dplyr::relocate(chisq, df, p_chisq, .after = term)
   
-  # neteja + rounding com abans
   results.table <- results.table %>%
     dplyr::filter(!is.na(chisq)) %>%
     dplyr::mutate(across(where(is.numeric), ~round(.x, digits = 3))) %>%
     dplyr::mutate(across(contains("cohensd"), abs))
   
   # -------------------------
-  # 4) Output formatting (UNCHANGED from your code)
+  # 4) Output formatting (kept compatible with your current)
   # -------------------------
   if (!is.na(path)) {
     
     library(flextable)
     set_flextable_defaults(font.family = "Arial", font.size = 9, digits = 3)
     
-    number_of_columns = ncol(results.table)
-    number_of_fs = round((number_of_columns-4)/4)
+    number_of_columns <- ncol(results.table)
+    number_of_fs <- round((number_of_columns - 4) / 4)
     
-    results = results.table %>% flextable() %>% theme_vanilla()
+    results <- results.table %>% flextable() %>% theme_vanilla()
     
-    results = results %>%
+    results <- results %>%
       colformat_num(j = "df", digits = 0) %>%
       merge_v(j = "term", target = c(1:4)) %>%
       bg(~ (p_chisq < .1 & p_chisq >= .05), ~ term + p_chisq, bg = "#d7eef3") %>%
       bg(~ p_chisq < .05, ~ term + p_chisq, bg = "#90ccde")
-    if(number_of_columns > 4) {results = results %>% merge_v(j = c(5:number_of_columns))}
+    
+    if (number_of_columns > 4) {
+      results <- results %>% merge_v(j = c(5:number_of_columns))
+    }
     
     if (number_of_columns >= 7) {
       for (f in 1:number_of_fs) {
-        f.p.value = str_c("f", f, ".p.value")
+        f.p.value <- str_c("f", f, ".p.value")
         if (f.p.value %in% results$body$col_keys) {
-          results = results %>%
+          results <- results %>%
             bg(i = (results$body$dataset[[f.p.value]] < .1 & results$body$dataset[[f.p.value]] >= .05),
                j = which(results$body$col_keys == f.p.value), bg = "#d7eef3") %>%
             bg(i = results$body$dataset[[f.p.value]] < .05,
@@ -290,16 +318,16 @@ glmmTable = function(model, path = NA, title = "Model", extract = FALSE, adjust 
       rm(f, f.p.value)
     }
     
-    # header values (keep your original)
-    # NOTE: categorical_factor_names may not align now; keep generic header
-    values = c("Model results", "", "", "")
-    results = results %>% add_header_row(values = values, top = TRUE); rm(values)
-    results = results %>% merge_at(i = 1, j = 1:4, part = "header")
+    values <- c("Model results", "", "", "")
+    results <- results %>% add_header_row(values = values, top = TRUE)
+    results <- results %>% merge_at(i = 1, j = 1:4, part = "header")
     
-    results = results %>% colformat_double(digits = 3) %>% padding(padding = 4, part = "all") %>% autofit()
+    results <- results %>% colformat_double(digits = 3) %>%
+      padding(padding = 4, part = "all") %>%
+      autofit()
     
     results %>% save_as_html(path = path, title = title)
   }
   
-  if (extract == TRUE) {return(results.table)}
+  if (extract) return(results.table)
 }
