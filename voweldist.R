@@ -38,6 +38,7 @@ voweldist = function(
   # Preliminary tasks
   
   vars_to_char = c(segments_var, tests_var, groups_var, subjects_var, items_var, unique_items_var) %>% unique() %>% na.omit()
+  vars_to_char_num <- vars_to_char[sapply(xdata[vars_to_char], is.numeric)]
   xdata = xdata %>% 
     arrange(across(all_of(vars_to_char))) %>% 
     mutate(across(all_of(vars_to_char), as.character))
@@ -357,6 +358,20 @@ voweldist = function(
     if (inter_group == TRUE) {xdata = xdata %>% mutate(dist_bet_mah = ifelse(is.nan(dist_bet_mah), NA_real_, dist_bet_mah))}
   }
   
+  if (exists("vars_to_char_num") && length(vars_to_char_num) > 0) {
+    for (v in vars_to_char_num) {
+      old <- xdata[[v]]
+      sup <- suppressWarnings(as.numeric(old))
+      
+      # si la conversió NO introdueix NA nous (ignorant els NA originals), l'apliquem
+      introduced_na <- sum(is.na(sup)) - sum(is.na(old))
+      if (!is.na(introduced_na) && introduced_na == 0) {
+        xdata[[v]] <- sup
+      }
+    }
+  }
+  
   return(xdata)
   
 }
+
