@@ -1,39 +1,73 @@
 # voweldist(): compute within- and between-group vowel distance metrics
 #
-# Computes token-level distances (Euclidean, Mahalanobis) and
-# category-level separation measures (Pillai trace, Bhattacharyya)
-# between levels of a binary contrast (contrast_var).
+# Computes vowel-distance and category-separation measures for a binary
+# contrast (`contrast_var`) using one or more acoustic dimensions
+# (`dependent_vars`).
+#
+# The function can return:
+# - token-level distances:
+#     * Euclidean
+#     * Mahalanobis
+# - category-level separation measures:
+#     * Pillai trace
+#     * Bhattacharyya distance
 #
 # Stratification:
-# `condition_vars` (if provided) define analysis strata. When multiple
+# `condition_vars` define the initial analysis strata. When multiple
 # variables are supplied, they are internally combined into `.condition_id`.
-# If NULL, a single global stratum is used.
+# If `condition_vars = NULL`, a single global stratum is used.
 #
 # Speaker handling:
-# `speaker_var` is optional. If NULL, computations are performed on pooled
-# data (no speaker-level stratification).
+# `speaker_var` is optional.
+# - If supplied, the most specific clouds may initially be speaker-specific.
+# - If `speaker_var = NULL`, computations are performed on pooled data.
 #
-# Within-group (inter_group = FALSE):
-# Distances are computed for each token relative to a reference distribution
-# defined by `within_ref` (e.g., inter-speaker mean, pooled, etc.), within
-# each stratum.
+# Within-group mode (`inter_group = FALSE`):
+# Metrics are computed within each group/stratum.
+# Depending on the metric, the result may be:
+# - token-level (e.g. Euclidean, Mahalanobis), or
+# - stratum-level and then joined back to all tokens in that stratum
+#   (e.g. Pillai, Bhattacharyya).
 #
-# Between-group (inter_group = TRUE):
-# Separation metrics are computed between each focal group and a
-# `reference_group`, within each stratum, and joined back to token-level data.
+# Between-group mode (`inter_group = TRUE`):
+# Metrics are computed between each focal group and `reference_group`,
+# within the requested stratification, and then joined back to token-level
+# rows.
 #
-# Cloud resolution:
-# If the requested stratification is not feasible (e.g., insufficient data or
-# non-invertible covariance), the function automatically falls back to simpler
-# clouds (e.g., removing speaker or condition variables, or global).
-# The effective clouds used are reported via messages and stored in `cloud`.
+# Cloud resolution / fallback:
+# If the requested stratification is not feasible, the function
+# automatically falls back to simpler clouds by progressively removing
+# `speaker_var` and then `condition_vars` from right to left until a usable
+# cloud is found, or until global pooling is reached.
 #
-# Notes:
+# The effective cloud actually used is reported via messages and stored in:
+# - `cloud_wit` for within-group computations
+# - `cloud_bet` for between-group computations
+#
+# Metric-specific notes:
 # - `contrast_var` must have exactly two levels.
-# - Mahalanobis and Bhattacharyya require sufficient data to estimate
-#   covariance matrices; otherwise fallback or NA may occur.
-# 
-# # Example 1: within-group distances with stratification
+# - Euclidean uses the centroid of the resolved reference cloud.
+#   In between-group mode, Euclidean may still be computed when the
+#   reference cloud contains only one complete observation, because a
+#   centroid can still be defined.
+# - Mahalanobis requires a usable covariance matrix in the resolved
+#   reference cloud. If covariance cannot be estimated or inverted,
+#   the result is `NA`.
+# - Bhattacharyya and Pillai require sufficiently populated clouds for both
+#   categories; otherwise fallback or `NA` may occur.
+#
+# Output:
+# Depending on the requested metrics and mode, the function may return:
+# - `dist_wit_euc`, `dist_wit_mah`, `dist_wit_pil`, `dist_wit_bha`
+# - `dist_bet_euc`, `dist_bet_mah`, `dist_bet_pil`, `dist_bet_bha`
+# - `cloud_wit` and/or `cloud_bet`
+#
+# Diagnostics:
+# If `diagnostics = TRUE`, additional metric-specific cloud and failure
+# columns may be returned. If `diagnostics = FALSE`, these auxiliary
+# diagnostic columns are removed from the final output.
+#
+# Example 1: within-group distances with stratification
 # df %>%
 #   voweldist(
 #     dependent_vars = c(B1B0, B2B1),
@@ -43,8 +77,8 @@
 #     compute_euclidean = TRUE,
 #     compute_mahalanobis = TRUE
 #   )
-# 
-# # Example 2: between-group comparison with reference group
+#
+# Example 2: between-group comparison with reference group
 # df %>%
 #   voweldist(
 #     dependent_vars = c(B1B0, B2B1),
@@ -55,8 +89,8 @@
 #     reference_group = "Native",
 #     inter_group = TRUE
 #   )
-# 
-# # Example 3: global analysis (no conditions, no speaker)
+#
+# Example 3: global pooled analysis
 # df %>%
 #   voweldist(
 #     dependent_vars = c(B1B0, B2B1),
@@ -370,6 +404,98 @@ voweldist = function(
     res$logdet <- logdet
     res$det <- detS
     res
+  }
+  
+  .compute_center_only_stats <- function(df_cloud, measure_nm) {
+    res <- list(
+      ok = FALSE,
+      reason = NA_character_,
+      center = NULL,
+      n = 0L,
+      data = NULL
+    )
+    
+    if (is.null(df_cloud) || !is.data.frame(df_cloud)) {
+      res$reason <- "null_cloud"
+      return(res)
+    }
+    if (!all(measure_nm %in% names(df_cloud))) {
+      res$reason <- "missing_measure_columns"
+      return(res)
+    }
+    
+    mat <- as.matrix(dplyr::select(df_cloud, dplyr::all_of(measure_nm)))
+    mat <- mat[stats::complete.cases(mat), , drop = FALSE]
+    res$n <- nrow(mat)
+    res$data <- as.data.frame(mat)
+    
+    if (nrow(mat) == 0) {
+      res$reason <- "no_complete_cases"
+      return(res)
+    }
+    
+    center <- colMeans(mat)
+    if (any(!is.finite(center))) {
+      res$reason <- "center_not_finite"
+      return(res)
+    }
+    
+    res$ok <- TRUE
+    res$reason <- NA_character_
+    res$center <- center
+    res
+  }
+  
+  .resolve_center_only_cloud <- function(pool, row_meta, spec_list, measure_nm,
+                                         contrast_value = NULL,
+                                         exclude_same_speaker = FALSE) {
+    pool0 <- pool
+    
+    if (!is.null(contrast_value) && contrast_nm %in% names(pool0)) {
+      if (is.na(contrast_value)) {
+        pool0 <- pool0 %>% dplyr::filter(is.na(.data[[contrast_nm]]))
+      } else {
+        pool0 <- pool0 %>% dplyr::filter(.data[[contrast_nm]] == contrast_value)
+      }
+    }
+    
+    failure_log <- character(0)
+    
+    for (spec_name in names(spec_list)) {
+      spec_cols <- spec_list[[spec_name]]
+      cand <- .subset_pool_by_spec(pool0, row_meta, spec_cols)
+      
+      if (isTRUE(exclude_same_speaker) &&
+          !is.null(speaker_nm) &&
+          speaker_nm %in% names(cand) &&
+          speaker_nm %in% names(row_meta)) {
+        cand <- cand %>% dplyr::filter(.data[[speaker_nm]] != row_meta[[speaker_nm]][1])
+      }
+      
+      stats_obj <- .compute_center_only_stats(cand, measure_nm)
+      
+      if (isTRUE(stats_obj$ok)) {
+        return(list(
+          data = cand,
+          spec_name = spec_name,
+          spec_cols = spec_cols,
+          effective_spec_name = .effective_spec_name(spec_cols, row_meta),
+          failure_reason = NA_character_,
+          stats = stats_obj
+        ))
+      }
+      
+      failure_log <- c(failure_log, paste0(spec_name, ": ", stats_obj$reason))
+    }
+    
+    list(
+      data = NULL,
+      spec_name = NA_character_,
+      spec_cols = NULL,
+      effective_spec_name = NA_character_,
+      failure_reason = paste(failure_log, collapse = " || "),
+      stats = NULL
+    )
   }
   
   .get_cloud_stats <- function(df_cloud, measure_nm, min_n = min_n_cloud, robust = TRUE, require_invertible = FALSE) {
@@ -1127,7 +1253,161 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
     as.numeric(max(0, min(V, 1)))
   }
 
-    .resolve_between_pair_table <- function(target_index, pool_all, ref_g) {
+
+  .pillai_cloud_reason <- function(df_cloud, contrast_col) {
+    if (is.null(df_cloud) || !is.data.frame(df_cloud)) return("null_cloud")
+    if (!all(c(measure_nm, contrast_col) %in% names(df_cloud))) return("missing_columns")
+
+    df_use <- df_cloud %>%
+      dplyr::select(dplyr::all_of(c(measure_nm, contrast_col))) %>%
+      dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x))) %>%
+      dplyr::filter(!is.na(.data[[contrast_col]]))
+
+    .pillai_reason(df_use, contrast_col)
+  }
+
+  .resolve_pillai_cloud_detail <- function(pool, row_meta, spec_list, contrast_col,
+                                           exclude_same_speaker = FALSE) {
+    failure_log <- character(0)
+
+    for (spec_name in names(spec_list)) {
+      spec_cols <- spec_list[[spec_name]]
+      cand <- .subset_pool_by_spec(pool, row_meta, spec_cols)
+
+      if (isTRUE(exclude_same_speaker) &&
+          !is.null(speaker_nm) &&
+          !is.na(speaker_nm) &&
+          speaker_nm %in% names(cand) &&
+          speaker_nm %in% names(row_meta)) {
+        cand <- cand %>% dplyr::filter(.data[[speaker_nm]] != row_meta[[speaker_nm]][1])
+      }
+
+      reason <- .pillai_cloud_reason(cand, contrast_col)
+      if (is.na(reason)) {
+        return(list(
+          data = cand,
+          spec_name = spec_name,
+          spec_cols = spec_cols,
+          effective_spec_name = .effective_spec_name(spec_cols, row_meta),
+          failure_reason = NA_character_
+        ))
+      }
+      failure_log <- c(failure_log, paste0(spec_name, ": ", reason))
+    }
+
+    list(
+      data = NULL,
+      spec_name = NA_character_,
+      spec_cols = NULL,
+      effective_spec_name = NA_character_,
+      failure_reason = paste(failure_log, collapse = " || ")
+    )
+  }
+
+  .resolve_pillai_cloud_cached <- function(base, row_meta, within_ref,
+                                           exclude_same_speaker = FALSE) {
+    row_group <- if (!is.na(group_nm) && group_nm %in% names(row_meta)) {
+      as.character(row_meta[[group_nm]][1])
+    } else {
+      NA_character_
+    }
+
+    specs_here <- .make_within_reference_specs(row_group, within_ref)
+    cache_cols <- unique(c(
+      if (!is.na(group_nm)) group_nm else NULL,
+      if (!is.na(speaker_nm)) speaker_nm else NULL,
+      if (!is.na(condition_nm)) condition_nm else NULL,
+      condition_vars_nm
+    ))
+
+    key <- paste(
+      "pillai",
+      paste0("within_ref=", within_ref),
+      paste0("exclude_same_speaker=", exclude_same_speaker),
+      paste0("specs=", paste(names(specs_here), collapse = ">")),
+      .row_cache_key(row_meta, cache_cols),
+      sep = ";"
+    )
+
+    if (exists(key, envir = .resolved_cloud_cache, inherits = FALSE)) {
+      return(get(key, envir = .resolved_cloud_cache, inherits = FALSE))
+    }
+
+    pool_base <- base
+    if (!is.na(group_nm) && group_nm %in% names(base) && !is.na(row_group)) {
+      pool_base <- pool_base %>% dplyr::filter(.data[[group_nm]] == row_group)
+    }
+
+    out <- .resolve_pillai_cloud_detail(
+      pool = pool_base,
+      row_meta = row_meta,
+      spec_list = specs_here,
+      contrast_col = "contrast_tmp",
+      exclude_same_speaker = exclude_same_speaker
+    )
+
+    assign(key, out, envir = .resolved_cloud_cache)
+    out
+  }
+
+  .resolve_pillai_between_cloud_detail <- function(pool, row_meta, spec_list, contrast_value) {
+    failure_log <- character(0)
+
+    for (spec_name in names(spec_list)) {
+      spec_cols <- spec_list[[spec_name]]
+      cand <- .subset_pool_by_spec(pool, row_meta, spec_cols)
+      cand <- cand %>% dplyr::filter(.data[[contrast_nm]] == contrast_value)
+
+      if (all(measure_nm %in% names(cand))) {
+        cand_meas <- cand %>%
+          dplyr::select(dplyr::all_of(measure_nm)) %>%
+          dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x)))
+      } else {
+        cand_meas <- tibble::tibble()
+      }
+
+      if (nrow(cand_meas) >= 2) {
+        return(list(
+          data = cand_meas,
+          spec_name = spec_name,
+          spec_cols = spec_cols,
+          effective_spec_name = .effective_spec_name(spec_cols, row_meta),
+          failure_reason = NA_character_
+        ))
+      }
+
+      failure_log <- c(failure_log, paste0(spec_name, ": insufficient_reference_points"))
+    }
+
+    list(
+      data = NULL,
+      spec_name = NA_character_,
+      spec_cols = NULL,
+      effective_spec_name = NA_character_,
+      failure_reason = paste(failure_log, collapse = " || ")
+    )
+  }
+
+  .upsert_cloud_col <- function(df, cloud_src, target_col = "cloud") {
+    target_sym <- rlang::sym(target_col)
+    
+    if (target_col %in% names(df)) {
+      df %>%
+        dplyr::mutate(
+          !!target_sym := dplyr::coalesce(
+            !!target_sym,
+            .clean_cloud_label({{ cloud_src }})
+          )
+        )
+    } else {
+      df %>%
+        dplyr::mutate(
+          !!target_sym := .clean_cloud_label({{ cloud_src }})
+        )
+    }
+  }
+
+  .resolve_between_pair_table <- function(target_index, pool_all, ref_g) {
     
     target_index %>%
       dplyr::rowwise() %>%
@@ -1184,241 +1464,244 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
   # =========================
   # EUCLIDEAN
   # =========================
-  
+
   if (isTRUE(compute_euclidean)) {
-    
-    if (!inter_group) {
-      .euc_vec = function(x_mat, mu_mat) {
-        d = sqrt(rowSums((x_mat - mu_mat)^2))
-        d[d == 0] = NA_real_
-        d
-      }
-      
-      d1 = xdata %>%
-        select(!!speaker_q, !!contrast_q, all_of(token_id_nm), !!condition_q, all_of(measure_nm)) %>%
-        filter(!!contrast_q == lvl1) %>%
-        select(!all_of(contrast_nm))
-      
-      d2 = xdata %>%
-        select(!!speaker_q, !!contrast_q, !!condition_q, all_of(measure_nm)) %>%
-        filter(!!contrast_q == lvl2) %>%
-        select(!all_of(contrast_nm))
-      
-      if (nrow(d2) == 0) stop("Within-group Euclidean: opposite contrast level has 0 rows.")
-      
-      if (within_ref == "self_speaker") {
-        ref_lvl1 = d2 %>%
-          group_by(!!speaker_q, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
-        
-        joined = left_join(d1, ref_lvl1, by = c(speaker_nm, condition_nm), suffix = c(".x", ".y"))
-        x_mat  = as.matrix(joined[, paste0(measure_nm, ".x"), drop = FALSE])
-        mu_mat = as.matrix(joined[, paste0(measure_nm, ".y"), drop = FALSE])
-        
-        euc_level_1 = tibble(distance = .euc_vec(x_mat, mu_mat)) %>%
-          bind_cols(d1, .) %>%
-          select(!all_of(measure_nm)) %>%
-          mutate(!!contrast_nm := lvl1)
-        
-      } else if (within_ref == "inter_speaker_mean") {
-        ref_by_speaker = d2 %>%
-          group_by(!!speaker_q, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
-          rename(ref_speaker = !!speaker_q)
-        
-        tokens = d1 %>% rename(target_speaker = !!speaker_q)
-        
-        pairs = left_join(tokens, ref_by_speaker, by = condition_nm,
-                          relationship = "many-to-many", suffix = c(".x", ".y")) %>%
-          filter(target_speaker != ref_speaker)
-        
-        x_mat  = as.matrix(pairs[, paste0(measure_nm, ".x"), drop = FALSE])
-        mu_mat = as.matrix(pairs[, paste0(measure_nm, ".y"), drop = FALSE])
-        pairs$distance = .euc_vec(x_mat, mu_mat)
-        
-        euc_level_1 = pairs %>%
-          group_by(target_speaker, across(all_of(token_id_nm)), !!condition_q) %>%
-          summarise(distance = mean(distance, na.rm = TRUE), .groups = "drop") %>%
-          rename(!!speaker_nm := target_speaker) %>%
-          mutate(!!contrast_nm := lvl1)
-        
-      } else {
-        ref_means = d2 %>%
-          group_by(!!speaker_q, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
-          rename(ref_speaker = !!speaker_q)
-        
-        speakers_by_cond = xdata %>%
-          distinct(!!speaker_q, !!condition_q) %>%
-          rename(target_speaker = !!speaker_q)
-        
-        pooled_ref = left_join(speakers_by_cond, ref_means, by = condition_nm, relationship = "many-to-many") %>%
-          filter(target_speaker != ref_speaker) %>%
-          group_by(target_speaker, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
-        
-        joined = left_join(d1 %>% rename(target_speaker = !!speaker_q),
-                           pooled_ref,
-                           by = c("target_speaker", condition_nm),
-                           suffix = c(".x", ".y"))
-        
-        x_mat  = as.matrix(joined[, paste0(measure_nm, ".x"), drop = FALSE])
-        mu_mat = as.matrix(joined[, paste0(measure_nm, ".y"), drop = FALSE])
-        
-        euc_level_1 = tibble(distance = .euc_vec(x_mat, mu_mat)) %>%
-          bind_cols(d1, .) %>%
-          select(!all_of(measure_nm)) %>%
-          mutate(!!contrast_nm := lvl1)
-      }
-      
-      d1 = xdata %>%
-        select(!!speaker_q, !!contrast_q, all_of(token_id_nm), !!condition_q, all_of(measure_nm)) %>%
-        filter(!!contrast_q == lvl2) %>%
-        select(!all_of(contrast_nm))
-      
-      d2 = xdata %>%
-        select(!!speaker_q, !!contrast_q, !!condition_q, all_of(measure_nm)) %>%
-        filter(!!contrast_q == lvl1) %>%
-        select(!all_of(contrast_nm))
-      
-      if (nrow(d2) == 0) stop("Within-group Euclidean: opposite contrast level has 0 rows.")
-      
-      if (within_ref == "self_speaker") {
-        ref_lvl2 = d2 %>%
-          group_by(!!speaker_q, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
-        
-        joined = left_join(d1, ref_lvl2, by = c(speaker_nm, condition_nm), suffix = c(".x", ".y"))
-        x_mat  = as.matrix(joined[, paste0(measure_nm, ".x"), drop = FALSE])
-        mu_mat = as.matrix(joined[, paste0(measure_nm, ".y"), drop = FALSE])
-        
-        euc_level_2 = tibble(distance = .euc_vec(x_mat, mu_mat)) %>%
-          bind_cols(d1, .) %>%
-          select(!all_of(measure_nm)) %>%
-          mutate(!!contrast_nm := lvl2)
-        
-      } else if (within_ref == "inter_speaker_mean") {
-        ref_by_speaker = d2 %>%
-          group_by(!!speaker_q, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
-          rename(ref_speaker = !!speaker_q)
-        
-        tokens = d1 %>% rename(target_speaker = !!speaker_q)
-        
-        pairs = left_join(tokens, ref_by_speaker, by = condition_nm,
-                          relationship = "many-to-many", suffix = c(".x", ".y")) %>%
-          filter(target_speaker != ref_speaker)
-        
-        x_mat  = as.matrix(pairs[, paste0(measure_nm, ".x"), drop = FALSE])
-        mu_mat = as.matrix(pairs[, paste0(measure_nm, ".y"), drop = FALSE])
-        pairs$distance = .euc_vec(x_mat, mu_mat)
-        
-        euc_level_2 = pairs %>%
-          group_by(target_speaker, across(all_of(token_id_nm)), !!condition_q) %>%
-          summarise(distance = mean(distance, na.rm = TRUE), .groups = "drop") %>%
-          rename(!!speaker_nm := target_speaker) %>%
-          mutate(!!contrast_nm := lvl2)
-        
-      } else {
-        ref_means = d2 %>%
-          group_by(!!speaker_q, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
-          rename(ref_speaker = !!speaker_q)
-        
-        speakers_by_cond = xdata %>%
-          distinct(!!speaker_q, !!condition_q) %>%
-          rename(target_speaker = !!speaker_q)
-        
-        pooled_ref = left_join(speakers_by_cond, ref_means, by = condition_nm,
-                               relationship = "many-to-many") %>%
-          filter(target_speaker != ref_speaker) %>%
-          group_by(target_speaker, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
-        
-        joined = left_join(d1 %>% rename(target_speaker = !!speaker_q),
-                           pooled_ref,
-                           by = c("target_speaker", condition_nm),
-                           suffix = c(".x", ".y"))
-        
-        x_mat  = as.matrix(joined[, paste0(measure_nm, ".x"), drop = FALSE])
-        mu_mat = as.matrix(joined[, paste0(measure_nm, ".y"), drop = FALSE])
-        
-        euc_level_2 = tibble(distance = .euc_vec(x_mat, mu_mat)) %>%
-          bind_cols(d1, .) %>%
-          select(!all_of(measure_nm)) %>%
-          mutate(!!contrast_nm := lvl2)
-      }
-      
-      euc_distances = bind_rows(euc_level_1, euc_level_2) %>%
-        rename(dist_wit_euc = distance)
-      
-      xdata = xdata %>%
-        left_join(euc_distances, by = c(speaker_nm, contrast_nm, token_id_nm, condition_nm) %>% unique())
-      
-      rm(euc_level_1, euc_level_2, euc_distances, d1, d2, .euc_vec)
+
+    .euc_vec = function(x_mat, mu_mat) {
+      d = sqrt(rowSums((x_mat - mu_mat)^2))
+      d[!is.finite(d)] = NA_real_
+      d
     }
-    
-    if (inter_group) {
-      .euc_between_one_direction = function(ref_g, focal_gs) {
-        d2_stratum = xdata %>%
-          select(!!group_q, !!contrast_q, !!condition_q, all_of(measure_nm)) %>%
-          filter(!!group_q == ref_g) %>%
-          group_by(!!contrast_q, !!condition_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
-        
-        d2_pooled = xdata %>%
-          select(!!group_q, !!contrast_q, all_of(measure_nm)) %>%
-          filter(!!group_q == ref_g) %>%
-          group_by(!!contrast_q) %>%
-          summarise(across(all_of(measure_nm), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
-        
-        purrr::map_dfr(focal_gs, function(fg) {
-          d1 = xdata %>%
-            select(!!group_q, !!speaker_q, !!contrast_q, all_of(token_id_nm), !!condition_q, all_of(measure_nm)) %>%
-            filter(!!group_q == fg)
-          
-          if (nrow(d1) == 0) return(tibble())
-          
-          euc_segment = d1 %>%
-            left_join(d2_stratum, by = c(contrast_nm, condition_nm), suffix = c(".x", ".y"))
-          
-          euc_segment_fb = d1 %>%
-            left_join(d2_pooled, by = contrast_nm, suffix = c(".x", ".fb"))
-          
-          for (m in measure_nm) {
-            y_col  = paste0(m, ".y")
-            fb_col = paste0(m, ".fb")
-            if (y_col %in% names(euc_segment) && fb_col %in% names(euc_segment_fb)) {
-              euc_segment[[y_col]] = dplyr::coalesce(euc_segment[[y_col]], euc_segment_fb[[fb_col]])
+
+    if (!inter_group) {
+      base_cols <- unique(c(
+        if (!is.na(group_nm)) group_nm else NULL,
+        if (!is.na(speaker_nm)) speaker_nm else NULL,
+        if (!is.na(condition_nm)) condition_nm else NULL,
+        condition_vars_nm,
+        contrast_nm,
+        token_id_nm,
+        measure_nm
+      ))
+      base_cols_present <- base_cols[base_cols %in% names(xdata)]
+
+      base_euc <- xdata %>%
+        dplyr::select(dplyr::all_of(base_cols_present)) %>%
+        dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x))) %>%
+        dplyr::distinct()
+
+      target_keys <- unique(c(
+        if (!is.na(group_nm)) group_nm else NULL,
+        if (!is.na(speaker_nm)) speaker_nm else NULL,
+        if (!is.na(condition_nm)) condition_nm else NULL,
+        condition_vars_nm
+      ))
+      target_keys <- target_keys[target_keys %in% names(xdata)]
+
+      target_index <- xdata %>%
+        dplyr::distinct(dplyr::across(dplyr::all_of(target_keys)))
+
+      exclude_same_euc <- within_ref %in% c("population_pooled", "inter_speaker_mean")
+
+      within_euc_refs <- target_index %>%
+        dplyr::rowwise() %>%
+        dplyr::mutate(
+          tmp = list({
+            row_meta <- dplyr::pick(dplyr::everything())
+
+            ref_lvl1 <- .resolve_within_cloud_cached(
+              base = base_euc,
+              row_meta = row_meta,
+              contrast_value = lvl2,
+              within_ref = within_ref,
+              require_invertible = FALSE,
+              exclude_same_speaker = exclude_same_euc
+            )
+
+            ref_lvl2 <- .resolve_within_cloud_cached(
+              base = base_euc,
+              row_meta = row_meta,
+              contrast_value = lvl1,
+              within_ref = within_ref,
+              require_invertible = FALSE,
+              exclude_same_speaker = exclude_same_euc
+            )
+
+            mu_lvl1 <- if (!is.null(ref_lvl1$data) && nrow(ref_lvl1$data) > 0) {
+              as.numeric(colMeans(ref_lvl1$data[, measure_nm, drop = FALSE], na.rm = TRUE))
+            } else {
+              rep(NA_real_, length(measure_nm))
             }
-          }
-          
-          x_mat  = as.matrix(euc_segment[, paste0(measure_nm, ".x"), drop = FALSE])
-          mu_mat = as.matrix(euc_segment[, paste0(measure_nm, ".y"), drop = FALSE])
-          dist = sqrt(rowSums((x_mat - mu_mat)^2))
-          dist[dist == 0] = NA_real_
-          
-          tibble(dist_bet_euc = dist) %>%
-            bind_cols(d1 %>% select(!!group_q, !!speaker_q, !!contrast_q, all_of(token_id_nm), !!condition_q), .)
+            mu_lvl2 <- if (!is.null(ref_lvl2$data) && nrow(ref_lvl2$data) > 0) {
+              as.numeric(colMeans(ref_lvl2$data[, measure_nm, drop = FALSE], na.rm = TRUE))
+            } else {
+              rep(NA_real_, length(measure_nm))
+            }
+
+            names(mu_lvl1) <- paste0("mu_lvl1_", measure_nm)
+            names(mu_lvl2) <- paste0("mu_lvl2_", measure_nm)
+            
+            out_row <- c(
+              as.list(stats::setNames(as.numeric(mu_lvl1), paste0("mu_lvl1_", measure_nm))),
+              as.list(stats::setNames(as.numeric(mu_lvl2), paste0("mu_lvl2_", measure_nm))),
+              list(
+                euc_ref_cloud_lvl1 = if (is.null(ref_lvl1$data)) NA_character_ else ref_lvl1$effective_spec_name,
+                euc_ref_cloud_lvl2 = if (is.null(ref_lvl2$data)) NA_character_ else ref_lvl2$effective_spec_name,
+                euc_fail_reason_lvl1 = if (is.null(ref_lvl1$data)) ref_lvl1$failure_reason else NA_character_,
+                euc_fail_reason_lvl2 = if (is.null(ref_lvl2$data)) ref_lvl2$failure_reason else NA_character_
+              )
+            )
+            
+            tibble::as_tibble_row(out_row)
+          })
+        ) %>%
+        tidyr::unnest_wider(tmp) %>%
+        dplyr::ungroup()
+
+      xdata <- xdata %>%
+        dplyr::left_join(
+          within_euc_refs %>% dplyr::select(-dplyr::any_of(c("euc_fail_reason_lvl1", "euc_fail_reason_lvl2"))),
+          by = target_keys
+        )
+
+      mu_lvl1_cols <- paste0("mu_lvl1_", measure_nm)
+      mu_lvl2_cols <- paste0("mu_lvl2_", measure_nm)
+
+      euc_distances <- xdata %>%
+        dplyr::rowwise() %>%
+        dplyr::mutate(
+          dist_wit_euc = {
+            x_vec <- c_across(dplyr::all_of(measure_nm))
+            mu_vec <- if (.data[[contrast_nm]] == lvl1) {
+              c_across(dplyr::all_of(mu_lvl1_cols))
+            } else if (.data[[contrast_nm]] == lvl2) {
+              c_across(dplyr::all_of(mu_lvl2_cols))
+            } else {
+              rep(NA_real_, length(measure_nm))
+            }
+            .euc_vec(matrix(as.numeric(x_vec), nrow = 1), matrix(as.numeric(mu_vec), nrow = 1))[1]
+          },
+          euc_ref_cloud_wit = dplyr::case_when(
+            .data[[contrast_nm]] == lvl1 ~ .data$euc_ref_cloud_lvl1,
+            .data[[contrast_nm]] == lvl2 ~ .data$euc_ref_cloud_lvl2,
+            TRUE ~ NA_character_
+          )
+        ) %>%
+        dplyr::ungroup() %>%
+        dplyr::select(-dplyr::all_of(c(mu_lvl1_cols, mu_lvl2_cols, "euc_ref_cloud_lvl1", "euc_ref_cloud_lvl2")))
+
+      xdata <- .upsert_cloud_col(euc_distances, .data$euc_ref_cloud_wit, "cloud_wit")
+
+      rm(base_euc, target_index, within_euc_refs, euc_distances)
+    }
+
+    if (inter_group) {
+      .resolve_euc_between_center <- function(pool, row_meta, ref_g, contrast_value) {
+        ref_specs <- .make_specs(
+          condition_vars_nm,
+          speaker_nm = NULL,
+          include_speaker = FALSE
+        )
+        
+        ref_pool <- pool %>% dplyr::filter(.data[[group_nm]] == ref_g)
+        
+        ref_cloud <- .resolve_center_only_cloud(
+          pool = ref_pool,
+          row_meta = row_meta,
+          spec_list = ref_specs,
+          measure_nm = measure_nm,
+          contrast_value = contrast_value,
+          exclude_same_speaker = FALSE
+        )
+        
+        if (is.null(ref_cloud$data)) {
+          return(list(
+            mu = rep(NA_real_, length(measure_nm)),
+            effective_spec_name = NA_character_,
+            failure_reason = ref_cloud$failure_reason
+          ))
+        }
+        
+        list(
+          mu = as.numeric(ref_cloud$stats$center),
+          effective_spec_name = paste0(ref_g, ": ", ref_cloud$effective_spec_name),
+          failure_reason = NA_character_
+        )
+      }
+
+      .euc_between_one_direction <- function(ref_g, focal_gs) {
+        purrr::map_dfr(focal_gs, function(fg) {
+          focal_dat <- xdata %>%
+            dplyr::filter(.data[[group_nm]] == fg) %>%
+            dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x))) %>%
+            dplyr::select(dplyr::all_of(unique(c(
+              group_nm, speaker_nm, contrast_nm, token_id_nm, condition_nm, condition_vars_nm, measure_nm
+            ))))
+
+          if (nrow(focal_dat) == 0) return(tibble::tibble())
+
+          focal_dat %>%
+            dplyr::rowwise() %>%
+            dplyr::mutate(
+              tmp = list({
+                row_meta <- dplyr::pick(dplyr::everything())
+
+                ref_center <- .resolve_euc_between_center(
+                  pool = xdata,
+                  row_meta = row_meta,
+                  ref_g = ref_g,
+                  contrast_value = row_meta[[contrast_nm]][1]
+                )
+
+                x_vec <- as.numeric(row_meta[measure_nm])
+                mu_vec <- ref_center$mu
+
+                val <- .euc_vec(matrix(x_vec, nrow = 1), matrix(mu_vec, nrow = 1))[1]
+                rr <- attr(val, "reason")
+                if (is.null(rr)) rr <- NA_character_
+                rr <- dplyr::coalesce(rr, ref_center$failure_reason)
+
+                tibble::tibble(
+                  dist_bet_euc = as.numeric(val),
+                  euc_ref_cloud_bet = ref_center$effective_spec_name,
+                  euc_fail_reason_bet = rr
+                )
+              })
+            ) %>%
+            tidyr::unnest_wider(tmp) %>%
+            dplyr::ungroup() %>%
+            dplyr::select(
+              dplyr::all_of(unique(c(group_nm, speaker_nm, contrast_nm, token_id_nm, condition_nm))),
+              dist_bet_euc,
+              euc_ref_cloud_bet,
+              euc_fail_reason_bet
+            )
         })
       }
-      
+
       if (isTRUE(auto_two_group)) {
-        euc_segment_all = bind_rows(
+        euc_segment_all <- dplyr::bind_rows(
           .euc_between_one_direction(ref_g = two_groups[2], focal_gs = two_groups[1]),
           .euc_between_one_direction(ref_g = two_groups[1], focal_gs = two_groups[2])
         )
       } else {
-        euc_segment_all = .euc_between_one_direction(ref_g = reference_group, focal_gs = focal_groups)
+        euc_segment_all <- .euc_between_one_direction(ref_g = reference_group, focal_gs = focal_groups)
       }
-      
-      xdata = xdata %>%
-        left_join(euc_segment_all, by = c(group_nm, speaker_nm, contrast_nm, token_id_nm, condition_nm) %>% unique())
-      
-      rm(euc_segment_all, .euc_between_one_direction)
+
+      xdata <- xdata %>%
+        dplyr::left_join(
+          euc_segment_all %>% dplyr::select(-dplyr::any_of("euc_fail_reason_bet")),
+          by = c(group_nm, speaker_nm, contrast_nm, token_id_nm, condition_nm) %>% unique()
+        )
+
+      xdata <- .upsert_cloud_col(xdata, .data$euc_ref_cloud_bet, "cloud_bet")
+
+      rm(euc_segment_all, .euc_between_one_direction, .resolve_euc_between_center)
     }
+
+    rm(.euc_vec)
   }
-  
+
   # =========================
   # MAHALANOBIS
   # =========================
@@ -1597,8 +1880,9 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
         dplyr::left_join(
           mah_distances %>% dplyr::select(-dplyr::any_of("mah_fail_reason_wit")),
           by = c(if (!is.na(group_nm)) group_nm else NULL, speaker_nm, condition_nm, token_id_nm, contrast_nm)
-        ) %>%
-        dplyr::mutate(cloud = .clean_cloud_label(.data$mah_ref_cloud_wit))
+        )
+      
+      xdata <- .upsert_cloud_col(xdata, .data$mah_ref_cloud_wit, "cloud_wit")
       
       rm(base, target_index, within_cloud_refs, tokens_nested, mah_distances, fail_subjects_wit)
     }
@@ -1696,8 +1980,9 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
         dplyr::left_join(
           mah_between_all %>% dplyr::select(-dplyr::any_of("mah_fail_reason_bet")),
           by = c(group_nm, speaker_nm, condition_nm, contrast_nm, token_id_nm)
-        ) %>%
-        dplyr::mutate(cloud = .clean_cloud_label(.data$mah_ref_cloud_bet))
+        )
+      
+      xdata <- .upsert_cloud_col(xdata, .data$mah_ref_cloud_bet, "cloud_bet")
       
       rm(pool_all, mah_between_all, .mah_between_one_direction)
     }
@@ -1706,287 +1991,278 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
   # =========================
   # PILLAI
   # =========================
-  
+
   if (isTRUE(compute_pillai)) {
-    
+
     if (!inter_group) {
-      base_pillai = xdata %>%
-        rename(contrast_raw = !!contrast_q) %>%
-        select(!!speaker_q, !!condition_q, all_of(measure_nm), contrast_raw)
-      
-      tok_lvl1 = base_pillai %>% filter(contrast_raw == lvl1) %>% select(-contrast_raw)
-      tok_lvl2 = base_pillai %>% filter(contrast_raw == lvl2) %>% select(-contrast_raw)
-      
-      pillai_errors <- list()
-      
-      if (within_ref == "self_speaker") {
-        pillai = base_pillai %>%
-          mutate(contrast_tmp = contrast_raw) %>%
-          select(-contrast_raw) %>%
-          group_by(!!condition_q, !!speaker_q) %>%
-          nest() %>%
-          rename(token_data = data) %>%
-          mutate(
-            dist_wit_pil = purrr::map2_dbl(
-              token_data,
-              paste(.data[[speaker_nm]], .data[[condition_nm]], sep = " || "),
-              ~ .pillai_two_clouds(.x, "contrast_tmp", debug = diagnostics, debug_id = .y)
+      base_cols <- unique(c(
+        if (!is.na(group_nm)) group_nm else NULL,
+        if (!is.na(speaker_nm)) speaker_nm else NULL,
+        if (!is.na(condition_nm)) condition_nm else NULL,
+        condition_vars_nm,
+        contrast_nm,
+        token_id_nm,
+        measure_nm
+      ))
+      base_cols_present <- base_cols[base_cols %in% names(xdata)]
+
+      base_pillai <- xdata %>%
+        dplyr::select(dplyr::all_of(base_cols_present)) %>%
+        dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x))) %>%
+        dplyr::distinct() %>%
+        dplyr::rename(contrast_tmp = !!contrast_q)
+
+      target_keys <- unique(c(
+        if (!is.na(group_nm)) group_nm else NULL,
+        if (!is.na(speaker_nm)) speaker_nm else NULL,
+        if (!is.na(condition_nm)) condition_nm else NULL,
+        condition_vars_nm
+      ))
+      target_keys <- target_keys[target_keys %in% names(xdata)]
+
+      target_index <- xdata %>%
+        dplyr::distinct(dplyr::across(dplyr::all_of(target_keys)))
+
+      exclude_same_pillai <- within_ref %in% c("population_pooled", "inter_speaker_mean")
+
+      pillai_cloud_refs <- target_index %>%
+        dplyr::rowwise() %>%
+        dplyr::mutate(
+          tmp = list({
+            row_meta <- dplyr::pick(dplyr::everything())
+
+            ref_cloud <- .resolve_pillai_cloud_cached(
+              base = base_pillai,
+              row_meta = row_meta,
+              within_ref = within_ref,
+              exclude_same_speaker = exclude_same_pillai
             )
-          ) %>%
-          ungroup() %>%
-          select(!!speaker_q, !!condition_q, dist_wit_pil)
-        
-      } else if (within_ref == "inter_speaker_mean") {
-        targets = base_pillai %>%
-          distinct(!!speaker_q, !!condition_q) %>%
-          rename(target_speaker = !!speaker_q)
-        
-        ref_index = base_pillai %>%
-          distinct(!!speaker_q, !!condition_q) %>%
-          rename(ref_speaker = !!speaker_q)
-        
-        pairs = targets %>%
-          left_join(ref_index, by = condition_nm, relationship = "many-to-many") %>%
-          filter(.data[["target_speaker"]] != .data[["ref_speaker"]]) %>%
-          left_join(tok_lvl1 %>% rename(target_speaker = !!speaker_q),
-                    by = c("target_speaker", condition_nm),
-                    relationship = "many-to-many") %>%
-          left_join(tok_lvl2 %>% rename(ref_speaker = !!speaker_q),
-                    by = c("ref_speaker", condition_nm),
-                    relationship = "many-to-many",
-                    suffix = c(".A", ".B"))
-        
-        pillai_pairs = pairs %>%
-          group_by(target_speaker, ref_speaker, !!condition_q) %>%
-          nest() %>%
-          rename(token_data = data) %>%
-          mutate(pil = purrr::map_dbl(token_data, ~ {
-            dfA = dplyr::select(.x, dplyr::ends_with(".A")) %>% rlang::set_names(measure_nm)
-            dfB = dplyr::select(.x, dplyr::ends_with(".B")) %>% rlang::set_names(measure_nm)
-            if (nrow(dfA) == 0 || nrow(dfB) == 0) return(NA_real_)
-            df_ab = bind_rows(
-              mutate(dfA, contrast_tmp = "A"),
-              mutate(dfB, contrast_tmp = "B")
+
+            tibble::tibble(
+              pil_cloud_data = list(ref_cloud$data),
+              pil_ref_cloud_wit = if (is.null(ref_cloud$data)) NA_character_ else ref_cloud$effective_spec_name,
+              pil_fail_reason_wit = if (is.null(ref_cloud$data)) ref_cloud$failure_reason else NA_character_
             )
-            .pillai_two_clouds(df_ab, "contrast_tmp")
-          })) %>%
-          ungroup() %>%
-          select(target_speaker, !!condition_q, pil)
-        
-        pillai = pillai_pairs %>%
-          group_by(target_speaker, !!condition_q) %>%
-          summarise(dist_wit_pil = mean(pil, na.rm = TRUE), .groups = "drop") %>%
-          mutate(dist_wit_pil = ifelse(is.nan(dist_wit_pil), NA_real_, dist_wit_pil)) %>%
-          rename(!!speaker_nm := target_speaker)
-        
-        rm(targets, ref_index, pairs, pillai_pairs)
-        
-      } else {
-        targets = base_pillai %>%
-          distinct(!!speaker_q, !!condition_q) %>%
-          rename(target_speaker = !!speaker_q)
-        
-        pooled_lvl2 = targets %>%
-          left_join(tok_lvl2 %>% rename(ref_speaker = !!speaker_q),
-                    by = condition_nm,
-                    relationship = "many-to-many") %>%
-          filter(.data[["target_speaker"]] != .data[["ref_speaker"]]) %>%
-          group_by(target_speaker, !!condition_q) %>%
-          summarise(dataB = list(select(pick(everything()), all_of(measure_nm))), .groups = "drop")
-        
-        pillai = targets %>%
-          left_join(tok_lvl1 %>% rename(target_speaker = !!speaker_q),
-                    by = c("target_speaker", condition_nm),
-                    relationship = "many-to-many") %>%
-          group_by(target_speaker, !!condition_q) %>%
-          nest() %>%
-          rename(token_data = data) %>%
-          left_join(pooled_lvl2, by = c("target_speaker", condition_nm)) %>%
-          mutate(dist_wit_pil = purrr::map2_dbl(token_data, dataB, ~ {
-            dfA = select(.x, all_of(measure_nm))
-            dfB = bind_rows(.y)
-            if (nrow(dfA) == 0 || nrow(dfB) == 0) return(NA_real_)
-            df_ab = bind_rows(
-              mutate(dfA, contrast_tmp = "A"),
-              mutate(dfB, contrast_tmp = "B")
-            )
-            .pillai_two_clouds(df_ab, "contrast_tmp")
-          })) %>%
-          ungroup() %>%
-          select(target_speaker, !!condition_q, dist_wit_pil) %>%
-          rename(!!speaker_nm := target_speaker)
-        
-        rm(targets, pooled_lvl2)
+          })
+        ) %>%
+        tidyr::unnest_wider(tmp) %>%
+        dplyr::ungroup()
+
+      pillai <- pillai_cloud_refs %>%
+        dplyr::rowwise() %>%
+        dplyr::mutate(
+          dist_wit_pil = {
+            if (is.null(pil_cloud_data[[1]])) {
+              tmp_val <- NA_real_
+              attr(tmp_val, "reason") <- pil_fail_reason_wit
+              tmp_val
+            } else {
+              .pillai_two_clouds(
+                pil_cloud_data[[1]],
+                "contrast_tmp",
+                debug = diagnostics,
+                debug_id = paste(
+                  if (!is.na(speaker_nm) && speaker_nm %in% names(dplyr::pick(dplyr::everything()))) .data[[speaker_nm]] else "ALL",
+                  if (!is.na(condition_nm) && condition_nm %in% names(dplyr::pick(dplyr::everything()))) .data[[condition_nm]] else "GLOBAL",
+                  sep = " || "
+                )
+              )
+            }
+          },
+          pil_num_reason = {
+            rr <- attr(dist_wit_pil, "reason")
+            if (is.null(rr)) NA_character_ else rr
+          }
+        ) %>%
+        dplyr::ungroup() %>%
+        dplyr::mutate(
+          pil_fail_reason_wit = dplyr::coalesce(.data$pil_fail_reason_wit, .data$pil_num_reason),
+          dist_wit_pil = as.numeric(.data$dist_wit_pil)
+        ) %>%
+        dplyr::select(
+          dplyr::all_of(target_keys),
+          dist_wit_pil,
+          pil_ref_cloud_wit,
+          pil_fail_reason_wit
+        )
+
+      xdata <- xdata %>%
+        dplyr::left_join(
+          pillai %>% dplyr::select(-dplyr::any_of("pil_fail_reason_wit")),
+          by = target_keys
+        )
+      xdata <- .upsert_cloud_col(xdata, .data$pil_ref_cloud_wit, "cloud_wit")
+
+      if (isTRUE(diagnostics)) {
+        total_n  <- nrow(target_index)
+        success_n <- sum(!is.na(pillai$dist_wit_pil))
+        message("\n--- PILLAI DIAGNOSTIC SUMMARY (WITHIN) ---")
+        message("Total cases attempted: ", total_n)
+        message("Success (Valid numbers): ", success_n, " (", round(100 * success_n / max(total_n, 1), 1), "%)")
+        fail_reasons <- pillai$pil_fail_reason_wit
+        fail_reasons <- fail_reasons[!is.na(fail_reasons)]
+        if (length(fail_reasons) > 0) {
+          tb <- sort(table(fail_reasons), decreasing = TRUE)
+          message("\nBreakdown of failures:\n")
+          print(tb)
+        } else if (success_n == 0) {
+          message("![WARNING] All calculations resulted in NaN or were skipped.")
+        }
+        message("----------------------------------------------")
       }
-      
-      xdata = xdata %>% left_join(pillai, by = c(speaker_nm, condition_nm))
-      rm(base_pillai, tok_lvl1, tok_lvl2, pillai)
+
+      rm(base_pillai, target_index, pillai_cloud_refs, pillai)
     }
-    
+
     if (inter_group) {
-      .pillai_group_tmp = function(dat) {
-        .pillai_two_clouds(dat, "group_tmp", debug = diagnostics, debug_id = "Inter-Group")
-        dat = dat %>% filter(if_all(all_of(measure_nm), ~ !is.na(.x)))
-        if (nrow(dat) <= length(measure_nm)) return(NA_real_)
-        if (n_distinct(dat$group_tmp) < 2) return(NA_real_)
-        tryCatch({
-          summary(
-            manova(as.matrix(select(dat, all_of(measure_nm))) ~ group_tmp, data = dat)
-          )$stats["group_tmp", "Pillai"] %>% as.numeric()
-        }, error = function(e) NA_real_)
-      }
-      
-      .pillai_group_tmp = function(dat) {
-        # Simplemente llamamos a la función robusta y que ella se encargue de todo
+      .pillai_group_tmp <- function(dat) {
         .pillai_two_clouds(
-          df_ab    = dat, 
-          class_col = "group_tmp", 
-          debug     = diagnostics, 
+          df_ab     = dat,
+          class_col = "group_tmp",
+          debug     = diagnostics,
           debug_id  = "Inter-Group"
         )
       }
-      
-      .pillai_between_one_direction = function(ref_g, focal_gs) {
-        ref_has_var = purrr::map_lgl(condition_vars_nm, function(vnm) {
-          any(!is.na(xdata[[vnm]][xdata[[group_nm]] == ref_g]))
-        })
-        names(ref_has_var) = condition_vars_nm
-        
-        ref_pool = xdata %>%
-          filter(.data[[group_nm]] == ref_g) %>%
-          select(all_of(condition_vars_nm), !!contrast_q, all_of(measure_nm)) %>%
-          filter(if_all(all_of(measure_nm), ~ !is.na(.x)))
-        
+
+      .pillai_between_one_direction <- function(ref_g, focal_gs) {
+        ref_pool_all <- xdata %>%
+          dplyr::filter(.data[[group_nm]] == ref_g) %>%
+          dplyr::select(
+            dplyr::all_of(unique(c(
+              group_nm, speaker_nm, condition_nm, condition_vars_nm, contrast_nm, measure_nm
+            )))
+          ) %>%
+          dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x)))
+
         purrr::map_dfr(focal_gs, function(fg) {
-          focal_dat = xdata %>%
-            filter(.data[[group_nm]] == fg) %>%
-            select(!!speaker_q, !!condition_q, all_of(condition_vars_nm), !!contrast_q, all_of(measure_nm)) %>%
-            filter(if_all(all_of(measure_nm), ~ !is.na(.x)))
-          
-          if (nrow(focal_dat) == 0) return(tibble())
-          
-          pillai_stratum_spk = focal_dat %>%
-            group_by(!!speaker_q, !!condition_q, across(all_of(condition_vars_nm)), !!contrast_q) %>%
-            group_modify(~{
-              focal_meas = select(.x, all_of(measure_nm))
-              ref_sub = ref_pool %>% filter(.data[[contrast_nm]] == .y[[contrast_nm]])
-              
-              for (vnm in condition_vars_nm) {
-                if (isTRUE(ref_has_var[[vnm]])) {
-                  val = .y[[vnm]]
-                  if (is.na(val)) ref_sub = ref_sub %>% filter(is.na(.data[[vnm]]))
-                  else ref_sub = ref_sub %>% filter(.data[[vnm]] == val)
-                }
-              }
-              
-              dat_ab = bind_rows(
-                mutate(focal_meas, group_tmp = "focal"),
-                mutate(select(ref_sub, all_of(measure_nm)), group_tmp = "reference")
-              )
-              
-              tibble(pillai = .pillai_group_tmp(dat_ab))
-            }) %>%
-            ungroup() %>%
-            mutate(!!rlang::sym(group_nm) := fg) %>%
-            select(!!rlang::sym(group_nm), !!speaker_q, !!condition_q, !!contrast_q, pillai)
-          
-          pillai_fb_spk = focal_dat %>%
-            group_by(!!speaker_q, !!contrast_q) %>%
-            nest() %>%
-            rename(token_data = data) %>%
-            ungroup() %>%
-            mutate(
-              pillai_fb = purrr::map2_dbl(
-                token_data, .data[[contrast_nm]],
-                function(dat_focal, contr_val) {
-                  focal_meas = select(dat_focal, all_of(measure_nm))
-                  ref_sub = ref_pool %>% filter(.data[[contrast_nm]] == contr_val)
-                  dat_ab = bind_rows(
-                    mutate(focal_meas, group_tmp = "focal"),
-                    mutate(select(ref_sub, all_of(measure_nm)), group_tmp = "reference")
+          focal_dat <- xdata %>%
+            dplyr::filter(.data[[group_nm]] == fg) %>%
+            dplyr::select(
+              dplyr::all_of(unique(c(
+                group_nm, speaker_nm, condition_nm, condition_vars_nm, contrast_nm, token_id_nm, measure_nm
+              )))
+            ) %>%
+            dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x)))
+
+          if (nrow(focal_dat) == 0) return(tibble::tibble())
+
+          focal_dat %>%
+            dplyr::rowwise() %>%
+            dplyr::mutate(
+              tmp = list({
+                row_meta <- dplyr::pick(dplyr::everything())
+
+                ref_specs <- .make_specs(
+                  include_speaker = FALSE,
+                  include_condition = TRUE,
+                  condition_vars = condition_vars_nm,
+                  speaker_nm = speaker_nm,
+                  condition_nm = condition_nm
+                )
+
+                ref_cloud <- .resolve_pillai_between_cloud_detail(
+                  pool = ref_pool_all,
+                  row_meta = row_meta,
+                  spec_list = ref_specs,
+                  contrast_value = row_meta[[contrast_nm]][1]
+                )
+
+                token_data <- tibble::as_tibble(row_meta) %>%
+                  dplyr::select(dplyr::all_of(measure_nm))
+
+                pil_value <- if (is.null(ref_cloud$data)) {
+                  tmp_val <- NA_real_
+                  attr(tmp_val, "reason") <- ref_cloud$failure_reason
+                  tmp_val
+                } else {
+                  dat_ab <- dplyr::bind_rows(
+                    dplyr::mutate(token_data, group_tmp = "focal"),
+                    dplyr::mutate(ref_cloud$data, group_tmp = "reference")
                   )
                   .pillai_group_tmp(dat_ab)
                 }
-              )
+
+                rr <- attr(pil_value, "reason")
+                if (is.null(rr)) rr <- NA_character_
+                rr <- dplyr::coalesce(rr, ref_cloud$failure_reason)
+
+                tibble::tibble(
+                  dist_bet_pil = as.numeric(pil_value),
+                  pil_ref_cloud_bet = if (is.null(ref_cloud$data)) NA_character_ else paste0(ref_g, ": ", ref_cloud$effective_spec_name),
+                  pil_fail_reason_bet = rr
+                )
+              })
             ) %>%
-            mutate(!!rlang::sym(group_nm) := fg) %>%
-            select(!!rlang::sym(group_nm), !!speaker_q, !!contrast_q, pillai_fb)
-          
-          pillai_stratum_spk %>%
-            left_join(pillai_fb_spk, by = c(group_nm, speaker_nm, contrast_nm)) %>%
-            mutate(pillai = coalesce(pillai, pillai_fb)) %>%
-            select(-pillai_fb)
+            tidyr::unnest_wider(tmp) %>%
+            dplyr::ungroup() %>%
+            dplyr::transmute(
+              !!group_nm := .data[[group_nm]],
+              !!speaker_nm := .data[[speaker_nm]],
+              !!condition_nm := .data[[condition_nm]],
+              !!contrast_nm := .data[[contrast_nm]],
+              !!token_id_nm := .data[[token_id_nm]],
+              dist_bet_pil,
+              pil_ref_cloud_bet,
+              pil_fail_reason_bet
+            )
         })
       }
-      
+
       if (isTRUE(auto_two_group)) {
-        pillai_all = bind_rows(
+        pillai_all <- dplyr::bind_rows(
           .pillai_between_one_direction(ref_g = two_groups[2], focal_gs = two_groups[1]),
           .pillai_between_one_direction(ref_g = two_groups[1], focal_gs = two_groups[2])
         )
       } else {
-        pillai_all = .pillai_between_one_direction(ref_g = reference_group, focal_gs = focal_groups)
+        pillai_all <- .pillai_between_one_direction(ref_g = reference_group, focal_gs = focal_groups)
       }
-      
-      xdata = xdata %>%
-        left_join(pillai_all, by = c(group_nm, speaker_nm, condition_nm, contrast_nm)) %>%
-        rename(dist_bet_pil = pillai) %>%
+
+      xdata <- xdata %>%
+        dplyr::left_join(
+          pillai_all %>% dplyr::select(-dplyr::any_of("pil_fail_reason_bet")),
+          by = c(group_nm, speaker_nm, condition_nm, contrast_nm, token_id_nm)
+        )
+      xdata <- .upsert_cloud_col(xdata, .data$pil_ref_cloud_bet, "cloud_bet")
+      xdata <- xdata %>%
         {
-          if (isTRUE(auto_two_group)) . else mutate(., dist_bet_pil = if_else(!!group_q == reference_group, NA_real_, dist_bet_pil))
-        } %>%
-        select(-any_of("pillai"))
-      
+          if (isTRUE(auto_two_group)) . else dplyr::mutate(., dist_bet_pil = dplyr::if_else(!!group_q == reference_group, NA_real_, dist_bet_pil))
+        }
+
+      if (isTRUE(diagnostics)) {
+        total_n <- nrow(pillai_all)
+        success_n <- sum(!is.na(pillai_all$dist_bet_pil))
+        message("\n--- PILLAI DIAGNOSTIC SUMMARY (BETWEEN) ---")
+        message("Total cases attempted: ", total_n)
+        message("Success (Valid numbers): ", success_n, " (", round(100 * success_n / max(total_n, 1), 1), "%)")
+        fail_reasons <- pillai_all$pil_fail_reason_bet
+        fail_reasons <- fail_reasons[!is.na(fail_reasons)]
+        if (length(fail_reasons) > 0) {
+          tb <- sort(table(fail_reasons), decreasing = TRUE)
+          message("\nBreakdown of failures:\n")
+          print(tb)
+        } else if (success_n == 0) {
+          message("![WARNING] All calculations resulted in NaN or were skipped.")
+        }
+        message("----------------------------------------------")
+      }
+
       rm(pillai_all, .pillai_between_one_direction, .pillai_group_tmp)
     }
   }
-  
+
   # --- Lógica de Limpieza y Diagnóstico Post-Cálculo ---
-  
+
   if (isTRUE(compute_pillai)) {
-    # 1. Identificar qué columna de Pillai existe en xdata
-    # Buscamos 'dist_bet_pil' si es inter_group, o 'dist_wit_pil' si no.
     target_col <- if (inter_group) "dist_bet_pil" else "dist_wit_pil"
-    
+
     if (target_col %in% names(xdata)) {
-      
-      # 2. Extraer motivos y verificar éxitos
-      reasons <- purrr::map_chr(xdata[[target_col]], ~ {
-        r <- attr(.x, "reason")
-        if (!is.null(r)) return(r)
-        if (is.na(.x) || is.nan(.x)) return("numerical_failure/NA")
-        return("Success")
-      })
-      
-      n_total <- length(reasons)
-      n_success <- sum(reasons == "Success")
-      all_failed <- (n_success == 0)
-      
-      # 3. Reporte de Diagnóstico
-      if (isTRUE(diagnostics)) {
-        type_label <- if (inter_group) "BETWEEN" else "WITHIN"
-        cat(sprintf("\n--- PILLAI DIAGNOSTIC SUMMARY (%s) ---\n", type_label))
-        cat(sprintf("Total cases attempted: %d\n", n_total))
-        
-        # Evitar NaN% si n_total es 0
-        perc_success <- if(n_total > 0) (n_success/n_total)*100 else 0
-        cat(sprintf("Success (Valid numbers): %d (%.1f%%)\n", n_success, perc_success))
-        
-        if (all_failed && n_total > 0) {
-          cat(crayon::red("![WARNING] All calculations resulted in NaN or were skipped.\n"))
-        } else if (n_success < n_total) {
-          cat("\nBreakdown of failures:\n")
-          print(table(reasons[reasons != "Success"]))
-        }
-        cat("----------------------------------------------\n")
-      }
-      
-      # 4. Eliminación de columna si el 100% ha fallado
-      if (all_failed && n_total > 0) {
+      all_failed <- all(is.na(xdata[[target_col]]) | is.nan(xdata[[target_col]]))
+      if (isTRUE(all_failed) && nrow(xdata) > 0) {
         xdata <- xdata %>% dplyr::select(-dplyr::all_of(target_col))
       }
     }
   }
-  
+
   # =========================
   # BHATTACHARYYA
   # =========================
@@ -2102,13 +2378,12 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
       
       xdata <- xdata %>%
         dplyr::left_join(
-          bh_within %>% dplyr::select(dplyr::all_of(bh_wit_join_cols), dist_wit_bha, cloud_bha = cloud),
+          bh_within %>% dplyr::select(dplyr::all_of(bh_wit_join_cols), dist_wit_bha, bha_ref_cloud_wit = cloud),
           by = c(if (!is.na(group_nm)) group_nm else NULL, speaker_nm, condition_nm)
         ) %>%
-        dplyr::mutate(
-          cloud = dplyr::if_else(!is.na(.data$cloud_bha), .data$cloud_bha, .data$cloud)
-        ) %>%
         dplyr::select(-dplyr::any_of("cloud_bha"))
+      
+      xdata <- .upsert_cloud_col(xdata, .data$bha_ref_cloud_wit, "cloud_wit")
       
       rm(base, target_index, bh_within, used_pairs, bha_ref_cols)
     }
@@ -2247,7 +2522,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
           )
         ) %>%
         dplyr::mutate(
-          cloud_bha = dplyr::if_else(
+          bha_ref_cloud_bet = dplyr::if_else(
             .data[[group_nm]] == reference_group,
             sub("^[^:]+: ", "", .cloud_ref_lookup),
             cloud_focal
@@ -2260,10 +2535,9 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
             dist_bet_bha
           )
         ) %>%
-        dplyr::mutate(
-          cloud = cloud_bha
-        ) %>%
-        dplyr::select(-cloud_focal, -.cloud_ref_lookup, -dplyr::any_of("cloud_bha"))
+        dplyr::select(-cloud_focal, -.cloud_ref_lookup)
+      
+      xdata <- .upsert_cloud_col(xdata, .data$bha_ref_cloud_bet, "cloud_bet")
       
       rm(pool_all, bh_between_all, used_pairs_bet, ref_cloud_lookup)
       if (exists("target_index")) rm(target_index)
@@ -2289,31 +2563,22 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
     xdata <- xdata %>% mutate(dist_bet_bha = ifelse(is.nan(dist_bet_bha), NA_real_, dist_bet_bha))
   }
   
-  if ("cloud" %in% names(xdata) && !isTRUE(compute_bhatt)) {
-    if (inter_group) {
-      used_clouds_msg <- xdata %>%
-        dplyr::filter(!is.na(.data$cloud)) %>%
-        dplyr::distinct(.data$cloud) %>%
-        dplyr::pull(.data$cloud)
-      .emit_clouds_used("clouds used: ", used_clouds_msg)
-    } else {
-      used_clouds_msg <- xdata %>%
-        dplyr::filter(!is.na(.data$cloud)) %>%
-        dplyr::distinct(.data$cloud) %>%
-        dplyr::pull(.data$cloud)
-      .emit_clouds_used("clouds used: ", used_clouds_msg)
-    }
-  }
-  
   xdata <- xdata %>%
     arrange(as.integer(.token_rowid)) %>%
     select(-matches("^n_groups(\\.x|\\.y)?$")) %>%
     select(-any_of(c(".token_rowid", ".condition_id", if (!speaker_user_supplied) ".speaker_dummy_internal" else NULL)))
   
-  if (!diagnostics) {
-    diagnostic_cols <- grep("_cloud_", names(xdata), value = TRUE)
-    diagnostic_cols <- setdiff(diagnostic_cols, c("cloud"))
-    xdata <- xdata %>% select(-all_of(diagnostic_cols))
+  if (!isTRUE(diagnostics)) {
+    xdata <- xdata %>%
+      dplyr::select(
+        -dplyr::any_of(c(
+          "euc_ref_cloud_wit", "mah_ref_cloud_wit", "pil_ref_cloud_wit", "bha_ref_cloud_wit",
+          "euc_ref_cloud_bet", "mah_ref_cloud_bet", "pil_ref_cloud_bet", "bha_ref_cloud_bet",
+          "euc_fail_reason_lvl1", "euc_fail_reason_lvl2",
+          "mah_fail_reason_wit", "mah_fail_reason_bet",
+          "pil_fail_reason_wit", "pil_fail_reason_bet"
+        ))
+      )
   }
   
   xdata
