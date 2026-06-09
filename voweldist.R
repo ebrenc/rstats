@@ -2129,7 +2129,8 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
           dplyr::filter(.data[[group_nm]] == ref_g) %>%
           dplyr::select(
             dplyr::all_of(unique(c(
-              group_nm, speaker_nm, condition_nm, condition_vars_nm, contrast_nm, measure_nm
+              group_nm, speaker_nm, condition_nm, condition_vars_nm,
+              contrast_nm, measure_nm
             )))
           ) %>%
           dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x)))
@@ -2139,12 +2140,21 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
             dplyr::filter(.data[[group_nm]] == fg) %>%
             dplyr::select(
               dplyr::all_of(unique(c(
-                group_nm, speaker_nm, condition_nm, condition_vars_nm, contrast_nm, token_id_nm, measure_nm
+                group_nm, speaker_nm, condition_nm, condition_vars_nm,
+                contrast_nm, token_id_nm, measure_nm
               )))
             ) %>%
             dplyr::filter(dplyr::if_all(dplyr::all_of(measure_nm), ~ !is.na(.x)))
           
           if (nrow(focal_dat) == 0) return(tibble::tibble())
+          
+          focal_pool_all <- focal_dat %>%
+            dplyr::select(
+              dplyr::all_of(unique(c(
+                group_nm, speaker_nm, condition_nm, condition_vars_nm,
+                contrast_nm, measure_nm
+              )))
+            )
           
           focal_dat %>%
             dplyr::rowwise() %>%
@@ -2152,39 +2162,55 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
               tmp = list({
                 row_meta <- dplyr::pick(dplyr::everything())
                 
-                # IMPORTANT:
-                # For between-group Pillai, the focal token can be stratified by
-                # condition_vars, but the reference group may not have matching
-                # Time/WordAge/etc. Therefore, allow a global reference cloud.
-                #
-                # Before, this used condition_vars_nm, which forced the reference
-                # to match the focal row's condition_vars. That fails when the
-                # reference group is Native and has Time/WordAge = NA.
-                ref_specs <- .make_specs(
-                  include_speaker = FALSE,
-                  include_condition = FALSE,
-                  condition_vars = character(0),
+                # Focal cloud:
+                # keep the requested focal stratification, usually
+                # Time × WordAge × Speaker, with fallback to simpler clouds.
+                focal_specs <- .make_specs(
+                  condition_vars_nm,
                   speaker_nm = speaker_nm,
-                  condition_nm = condition_nm
+                  include_speaker = TRUE
+                )
+                
+                focal_cloud <- .resolve_pillai_between_cloud_detail(
+                  pool = focal_pool_all,
+                  row_meta = row_meta,
+                  spec_list = focal_specs,
+                  contrast_value = NULL
+                )
+                
+                # Reference cloud:
+                # allow global reference, because Native may not have
+                # matching Time / WordAge levels.
+                ref_specs <- .make_specs(
+                  character(0),
+                  speaker_nm = speaker_nm,
+                  include_speaker = FALSE
                 )
                 
                 ref_cloud <- .resolve_pillai_between_cloud_detail(
                   pool = ref_pool_all,
                   row_meta = row_meta,
                   spec_list = ref_specs,
-                  contrast_value = row_meta[[contrast_nm]][1]
+                  contrast_value = NULL
                 )
                 
-                token_data <- tibble::as_tibble(row_meta) %>%
-                  dplyr::select(dplyr::all_of(measure_nm))
-                
-                pil_value <- if (is.null(ref_cloud$data)) {
+                pil_value <- if (is.null(focal_cloud$data) || is.null(ref_cloud$data)) {
                   tmp_val <- NA_real_
-                  attr(tmp_val, "reason") <- ref_cloud$failure_reason
+                  
+                  reasons <- c(
+                    if (is.null(focal_cloud$data)) {
+                      paste0("focal: ", focal_cloud$failure_reason)
+                    },
+                    if (is.null(ref_cloud$data)) {
+                      paste0("reference: ", ref_cloud$failure_reason)
+                    }
+                  )
+                  
+                  attr(tmp_val, "reason") <- paste(reasons, collapse = " || ")
                   tmp_val
                 } else {
                   dat_ab <- dplyr::bind_rows(
-                    dplyr::mutate(token_data, group_tmp = "focal"),
+                    dplyr::mutate(focal_cloud$data, group_tmp = "focal"),
                     dplyr::mutate(ref_cloud$data, group_tmp = "reference")
                   )
                   
@@ -2193,7 +2219,12 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                 
                 rr <- attr(pil_value, "reason")
                 if (is.null(rr)) rr <- NA_character_
-                rr <- dplyr::coalesce(rr, ref_cloud$failure_reason)
+                
+                rr <- dplyr::coalesce(
+                  rr,
+                  if (is.null(focal_cloud$data)) focal_cloud$failure_reason else NA_character_,
+                  if (is.null(ref_cloud$data)) ref_cloud$failure_reason else NA_character_
+                )
                 
                 tibble::tibble(
                   dist_bet_pil = as.numeric(pil_value),
@@ -2201,6 +2232,11 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                     NA_character_
                   } else {
                     paste0(ref_g, ": ", ref_cloud$effective_spec_name)
+                  },
+                  pil_focal_cloud_bet = if (is.null(focal_cloud$data)) {
+                    NA_character_
+                  } else {
+                    focal_cloud$effective_spec_name
                   },
                   pil_fail_reason_bet = rr
                 )
@@ -2216,6 +2252,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
               !!token_id_nm := .data[[token_id_nm]],
               dist_bet_pil,
               pil_ref_cloud_bet,
+              pil_focal_cloud_bet,
               pil_fail_reason_bet
             )
         })
