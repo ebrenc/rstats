@@ -1356,7 +1356,10 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
     for (spec_name in names(spec_list)) {
       spec_cols <- spec_list[[spec_name]]
       cand <- .subset_pool_by_spec(pool, row_meta, spec_cols)
-      cand <- cand %>% dplyr::filter(.data[[contrast_nm]] == contrast_value)
+      if (!is.null(contrast_value) && length(contrast_value) > 0 && !all(is.na(contrast_value))) {
+        cand <- cand %>%
+          dplyr::filter(.data[[contrast_nm]] %in% contrast_value)
+      }
       
       if (all(measure_nm %in% names(cand))) {
         cand_meas <- cand %>%
