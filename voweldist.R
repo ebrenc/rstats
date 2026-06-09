@@ -771,7 +771,7 @@ voweldist = function(
     paste(cols, collapse = " * ")
   }
   
-  .make_specs <- function(condition_vars_nm, speaker_nm = NULL, include_speaker = FALSE) {
+  .make_specs <- function(condition_vars_nm, speaker_nm = NULL, include_speaker = FALSE, ...) {
     specs <- list()
     
     if (length(condition_vars_nm) > 0) {
