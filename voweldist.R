@@ -1277,44 +1277,77 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
       return(fail("H_not_finite"))
     }
     
+    # MANOVA Pillai first, direct SVD fallback
     Tmat <- E + H
-    
+
     if (anyNA(Tmat) || any(!is.finite(Tmat))) {
       return(fail("Tmat_not_finite"))
     }
-    
-    eps <- 1e-8
-    Tmat <- Tmat + diag(eps, nrow(Tmat))
-    
-    if (anyNA(Tmat) || any(!is.finite(Tmat))) {
-      return(fail("Tmat_not_finite_after_regularization"))
-    }
-    
+
+    # Direct Pillai: pseudoinverse rule
+    # No fixed diagonal regularisation is added.
     s <- tryCatch(svd(Tmat), error = function(e) NULL)
     if (is.null(s)) {
       return(fail("svd_error"))
     }
-    
+
     if (anyNA(s$d) || any(!is.finite(s$d))) {
       return(fail("svd_values_not_finite"))
     }
-    
+
+    tol <- max(dim(Tmat)) * max(s$d, 1) * .Machine$double.eps
+    inv_d <- ifelse(s$d > tol, 1 / s$d, 0)
+
     Tinv <- tryCatch(
-      s$v %*% (diag(ifelse(s$d > 1e-9, 1 / s$d, 0), nrow = length(s$d))) %*% t(s$u),
+      s$v %*% diag(inv_d, nrow = length(inv_d)) %*% t(s$u),
       error = function(e) NULL
     )
-    
+
     if (is.null(Tinv) || anyNA(Tinv) || any(!is.finite(Tinv))) {
       return(fail("Tinv_not_finite"))
     }
-    
-    V <- tryCatch(sum(diag(H %*% Tinv)), error = function(e) NA_real_)
-    
-    if (is.na(V) || is.nan(V) || !is.finite(V)) {
+
+    direct_pillai <- tryCatch(
+      sum(diag(H %*% Tinv)),
+      error = function(e) NA_real_
+    )
+
+    if (!is.finite(direct_pillai)) {
       return(fail("pillai_not_finite"))
     }
-    
-    as.numeric(max(0, min(V, 1)))
+
+    direct_pillai <- as.numeric(max(0, min(direct_pillai, 1)))
+
+    # Primary reported value: the standard R MANOVA Pillai, exactly as
+    # in Stanley & Sneller's implementation.
+    Y <- as.matrix(df_ab[, measure_nm, drop = FALSE])
+    cls <- factor(df_ab$.class_tmp, levels = levs)
+
+    man <- tryCatch(
+      stats::manova(Y ~ cls),
+      error = function(e) NULL
+    )
+
+    if (!is.null(man)) {
+      sm <- tryCatch(
+        suppressWarnings(summary(man, test = "Pillai")),
+        error = function(e) NULL
+      )
+
+      if (!is.null(sm) && !is.null(sm$stats) && nrow(sm$stats) >= 1L) {
+        stat_row <- sm$stats[1L, , drop = TRUE]
+        if (!is.null(names(stat_row)) && "Pillai" %in% names(stat_row)) {
+          pillai_manova <- as.numeric(unname(stat_row[["Pillai"]]))
+          if (is.finite(pillai_manova)) {
+            return(pillai_manova)
+          }
+        }
+      }
+    }
+
+    # If MANOVA cannot provide the statistic (e.g. rank deficiency),
+    # retain the same acoustic cloud and return the direct Pillai.
+    direct_pillai
   }
   
   
