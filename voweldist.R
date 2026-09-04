@@ -1,6 +1,6 @@
 # voweldist(): compute within- and between-group vowel distance metrics
 #
-# Computes vowel-distance and category-separation measures for a binary
+# Computes vowel-distance and category-separation measures for a two-level
 # contrast (`contrast_var`) using one or more acoustic dimensions
 # (`dependent_vars`).
 #
@@ -13,32 +13,68 @@
 #     * Bhattacharyya distance
 #
 # Stratification:
-# `condition_vars` define the initial analysis strata. When multiple
+# `condition_vars` define the condition-based analysis strata. When multiple
 # variables are supplied, they are internally combined into `.condition_id`.
-# If `condition_vars = NULL`, a single global stratum is used.
+# If `condition_vars = NULL`, no condition-based stratification is imposed.
 #
 # Speaker handling:
 # `speaker_var` is optional.
-# - If supplied, the most specific clouds may initially be speaker-specific.
+# - `initial_speaker_stratification = TRUE` starts within-group cloud
+#   resolution with a speaker-specific cloud when `speaker_var` is supplied.
+# - `initial_speaker_stratification = FALSE` pools speakers from the first
+#   candidate cloud while preserving `condition_vars` as far as possible.
+# - `exclude_focal_speaker_from_ref = TRUE` constructs within-group reference
+#   clouds as leave-one-speaker-out references: the focal speaker is removed
+#   before reference-cloud viability is assessed.
+# - When `exclude_focal_speaker_from_ref = TRUE`, a speaker-specific reference
+#   cloud is impossible by definition and is therefore skipped automatically.
+# - `exclude_focal_speaker_from_ref = TRUE` requires `speaker_var`.
+# - `exclude_focal_speaker_from_ref` applies only to within-group reference
+#   clouds and does not modify between-group calculations.
 # - If `speaker_var = NULL`, computations are performed on pooled data.
 #
 # Within-group mode (`inter_group = FALSE`):
-# Metrics are computed within each group/stratum.
+# Metrics quantify the relationship between the two levels of `contrast_var`
+# within each resolved group/condition/speaker cloud.
+#
 # Depending on the metric, the result may be:
-# - token-level (e.g. Euclidean, Mahalanobis), or
-# - stratum-level and then joined back to all tokens in that stratum
-#   (e.g. Pillai, Bhattacharyya).
+# - token-level, with each token evaluated relative to the opposite
+#   contrast category in the resolved reference cloud
+#   (Euclidean, Mahalanobis), or
+# - cloud-level, with one category-separation value calculated for the two
+#   contrast categories and then joined back to the relevant tokens
+#   (Pillai, Bhattacharyya).
 #
 # Between-group mode (`inter_group = TRUE`):
-# Metrics are computed between each focal group and `reference_group`,
-# within the requested stratification, and then joined back to token-level
-# rows.
+# Metrics compare each focal group with `reference_group`.
+#
+# Between-group comparisons are made within the same level of `contrast_var`.
+# Thus, for example, if `contrast_var = Vowel`, Learner /i/ is compared with
+# Native /i/, and Learner /u/ with Native /u/, rather than pooling vowel
+# categories across groups.
+#
+# Condition and speaker stratification are preserved as far as permitted by
+# the available data and the metric-specific viability requirements.
 #
 # Cloud resolution / fallback:
-# If the requested stratification is not feasible, the function
-# automatically falls back to simpler clouds by progressively removing
-# `speaker_var` and then `condition_vars` from right to left until a usable
-# cloud is found, or until global pooling is reached.
+# Within-group cloud resolution begins at the level specified by
+# `initial_speaker_stratification`.
+#
+# With `initial_speaker_stratification = TRUE`, the candidate hierarchy starts
+# with the most specific condition × speaker cloud. If that cloud is not
+# viable, `speaker_var` is dropped first and `condition_vars` are then removed
+# progressively from right to left until a usable pooled cloud is found.
+#
+# With `initial_speaker_stratification = FALSE`, resolution starts with the
+# most specific condition-based pooled-speaker cloud, and `condition_vars`
+# are progressively removed if necessary.
+#
+# When `exclude_focal_speaker_from_ref = TRUE`, the focal speaker is removed
+# from each within-group reference cloud before viability is assessed.
+#
+# Between-group calculations use their own cloud-resolution hierarchy and are
+# not governed by `initial_speaker_stratification` or
+# `exclude_focal_speaker_from_ref`.
 #
 # The effective cloud actually used is reported via messages and stored in:
 # - `cloud_wit` for within-group computations
@@ -46,15 +82,26 @@
 #
 # Metric-specific notes:
 # - `contrast_var` must have exactly two levels.
-# - Euclidean uses the centroid of the resolved reference cloud.
-#   In between-group mode, Euclidean may still be computed when the
-#   reference cloud contains only one complete observation, because a
-#   centroid can still be defined.
-# - Mahalanobis requires a usable covariance matrix in the resolved
-#   reference cloud. If covariance cannot be estimated or inverted,
-#   the result is `NA`.
-# - Bhattacharyya and Pillai require sufficiently populated clouds for both
-#   categories; otherwise fallback or `NA` may occur.
+#
+# - Euclidean distance uses the centroid of the resolved reference cloud.
+#   In between-group mode, Euclidean may still be computed when the reference
+#   cloud contains only one complete observation, because a centroid remains
+#   defined.
+#
+# - Mahalanobis distance uses the centroid and covariance structure of the
+#   resolved reference cloud. If a usable covariance matrix cannot be
+#   estimated or inverted, the result is `NA`.
+#
+# - Pillai trace measures multivariate separation between two clouds.
+#   In within-group mode, the two clouds are the two levels of `contrast_var`.
+#   In between-group mode, the two clouds are the focal and reference groups
+#   restricted to the same level of `contrast_var`.
+#
+# - Bhattacharyya distance measures multivariate separation between the two
+#   resolved category distributions.
+#
+# - Pillai and Bhattacharyya require sufficiently populated clouds for both
+#   distributions; otherwise fallback or `NA` may occur.
 #
 # Output:
 # Depending on the requested metrics and mode, the function may return:
@@ -62,23 +109,39 @@
 # - `dist_bet_euc`, `dist_bet_mah`, `dist_bet_pil`, `dist_bet_bha`
 # - `cloud_wit` and/or `cloud_bet`
 #
+# `cloud_wit` and `cloud_bet` identify the effective stratification level
+# actually used after any required fallback.
+#
 # Diagnostics:
 # If `diagnostics = TRUE`, additional metric-specific cloud and failure
 # columns may be returned. If `diagnostics = FALSE`, these auxiliary
 # diagnostic columns are removed from the final output.
 #
-# Example 1: within-group distances with stratification
+# Example 1: within-group distances, speaker-specific first
 # df %>%
 #   voweldist(
 #     dependent_vars = c(B1B0, B2B1),
 #     contrast_var = Vowel,
 #     condition_vars = c(Time, WordAge),
 #     speaker_var = Speaker,
+#     initial_speaker_stratification = TRUE,
+#     exclude_focal_speaker_from_ref = FALSE,
 #     compute_euclidean = TRUE,
 #     compute_mahalanobis = TRUE
 #   )
 #
-# Example 2: between-group comparison with reference group
+# Example 2: within-group leave-one-speaker-out reference
+# df %>%
+#   voweldist(
+#     dependent_vars = c(B1B0, B2B1),
+#     contrast_var = Vowel,
+#     condition_vars = c(Time, WordAge),
+#     speaker_var = Speaker,
+#     initial_speaker_stratification = FALSE,
+#     exclude_focal_speaker_from_ref = TRUE
+#   )
+#
+# Example 3: between-group comparison with a reference group
 # df %>%
 #   voweldist(
 #     dependent_vars = c(B1B0, B2B1),
@@ -90,26 +153,28 @@
 #     inter_group = TRUE
 #   )
 #
-# Example 3: global pooled analysis
+# Example 4: global pooled analysis
 # df %>%
 #   voweldist(
 #     dependent_vars = c(B1B0, B2B1),
 #     contrast_var = Vowel,
 #     condition_vars = NULL,
-#     speaker_var = NULL
+#     speaker_var = NULL,
+#     initial_speaker_stratification = FALSE
 #   )
 
 voweldist = function(
-    x,                                  # data frame of application
-    dependent_vars,                     # e.g. c(B1B0, B2B1)
-    inter_group = FALSE,                # e.g. FALSE (within ES), TRUE (ES vs NS)
-    contrast_var,                       # e.g. Vowel
-    condition_vars,                     # e.g. TestingTime OR c(Task, TestingTime)
-    speaker_var,                        # e.g. Participant
-    group_var = NULL,                   # e.g. NativeParticipant (or Group)
-    reference_group = NULL,             # e.g. "NS"
-    focal_group = NULL,                 # e.g. "ES" (or "Control")
-    within_ref = "self_speaker",        # "self_speaker", "inter_speaker_mean", "population_pooled"
+    x,                                      # data frame of application
+    dependent_vars,                         # e.g. c(B1B0, B2B1)
+    inter_group = FALSE,                    # e.g. FALSE (within ES), TRUE (ES vs NS)
+    contrast_var,                           # e.g. Vowel
+    condition_vars,                         # e.g. TestingTime OR c(Task, TestingTime)
+    speaker_var,                            # e.g. Participant
+    group_var = NULL,                       # e.g. NativeParticipant (or Group)
+    reference_group = NULL,                 # e.g. "NS"
+    focal_group = NULL,                     # e.g. "ES" (or "Control")
+    initial_speaker_stratification = TRUE,  # TRUE: speaker-stratified first; FALSE: pooled group first
+    exclude_focal_speaker_from_ref = FALSE, # within only: leave focal speaker out of reference clouds
     compute_euclidean = FALSE,
     compute_mahalanobis = TRUE,
     compute_pillai = FALSE,
@@ -180,8 +245,32 @@ voweldist = function(
   
   rm(vars_to_char, cond_sel)
   
-  if (!inter_group) {
-    within_ref <- match.arg(within_ref, c("self_speaker", "inter_speaker_mean", "population_pooled"))
+  if (
+    length(initial_speaker_stratification) != 1L ||
+    !is.logical(initial_speaker_stratification) ||
+    is.na(initial_speaker_stratification)
+  ) {
+    stop("`initial_speaker_stratification` must be TRUE or FALSE.")
+  }
+
+  if (
+    length(exclude_focal_speaker_from_ref) != 1L ||
+    !is.logical(exclude_focal_speaker_from_ref) ||
+    is.na(exclude_focal_speaker_from_ref)
+  ) {
+    stop("`exclude_focal_speaker_from_ref` must be TRUE or FALSE.")
+  }
+
+  if (isTRUE(exclude_focal_speaker_from_ref) && !speaker_user_supplied) {
+    stop("`exclude_focal_speaker_from_ref = TRUE` requires `speaker_var`.")
+  }
+
+  if (isTRUE(exclude_focal_speaker_from_ref) && isTRUE(inter_group)) {
+    warning(
+      "`exclude_focal_speaker_from_ref` applies only to within-group ",
+      "reference clouds and is ignored when `inter_group = TRUE`.",
+      call. = FALSE
+    )
   }
   
   contrast_levels = xdata %>%
@@ -589,19 +678,19 @@ voweldist = function(
     )
   }
   
-  .resolve_within_cloud_cached <- function(base, row_meta, contrast_value, within_ref, require_invertible = FALSE, exclude_same_speaker = FALSE) {
+  .resolve_within_cloud_cached <- function(base, row_meta, contrast_value, initial_speaker_stratification, require_invertible = FALSE, exclude_same_speaker = FALSE) {
     row_group <- if (!is.na(group_nm) && group_nm %in% names(row_meta)) {
       as.character(row_meta[[group_nm]][1])
     } else {
       NA_character_
     }
     
-    specs_here <- .make_within_reference_specs(row_group, within_ref)
+    specs_here <- .make_initial_speaker_stratificationerence_specs(row_group, initial_speaker_stratification)
     cache_cols <- unique(c(if (!is.na(group_nm)) group_nm else NULL, speaker_nm, condition_nm, condition_vars_nm))
     key <- paste(
       "within",
       paste0("contrast=", ifelse(is.null(contrast_value), "<NULL>", as.character(contrast_value))),
-      paste0("within_ref=", within_ref),
+      paste0("initial_speaker_stratification=", initial_speaker_stratification),
       paste0("require_invertible=", require_invertible),
       paste0("exclude_same_speaker=", exclude_same_speaker),
       paste0("specs=", paste(names(specs_here), collapse = ">")),
@@ -805,39 +894,14 @@ voweldist = function(
       identical(as.character(row_group), as.character(reference_group))
   }
   
-  .make_within_reference_specs <- function(row_group, within_ref) {
-    if (within_ref == "self_speaker") {
-      if (.is_reference_group(row_group)) {
-        specs <- list()
-        
-        if (length(condition_vars_nm) > 0) {
-          specs[[length(specs) + 1]] <- c(condition_vars_nm, speaker_spec_nm)
-          specs[[length(specs) + 1]] <- condition_vars_nm
-          
-          if (length(condition_vars_nm) > 1) {
-            for (i in seq(length(condition_vars_nm) - 1, 1, by = -1)) {
-              specs[[length(specs) + 1]] <- condition_vars_nm[1:i]
-            }
-          }
-        } else {
-          specs[[length(specs) + 1]] <- speaker_spec_nm
-        }
-        
-        specs[[length(specs) + 1]] <- character(0)
-        
-        keep <- !duplicated(vapply(specs, paste, collapse = "|", FUN.VALUE = character(1)))
-        specs <- specs[keep]
-        names(specs) <- vapply(specs, .spec_label, FUN.VALUE = character(1))
-        return(specs)
-        
-      } else {
-        return(.make_specs(condition_vars_nm, speaker_nm = speaker_spec_nm, include_speaker = TRUE))
-      }
-    } else {
-      return(.make_specs(condition_vars_nm, speaker_nm = speaker_spec_nm, include_speaker = FALSE))
-    }
+  .make_initial_speaker_stratificationerence_specs <- function(row_group, initial_speaker_stratification) {
+    .make_specs(
+      condition_vars_nm,
+      speaker_nm = speaker_spec_nm,
+      include_speaker = isTRUE(initial_speaker_stratification) && !isTRUE(exclude_focal_speaker_from_ref)
+    )
   }
-  
+
   .make_between_specs <- function(condition_vars_nm) {
     .make_specs(condition_vars_nm, speaker_nm = NULL, include_speaker = FALSE)
   }
@@ -884,7 +948,7 @@ voweldist = function(
     
     values <- values[!is.na(values)]
     values <- unique(values)
-    values <- stringr::str_replace_all(values, fixed("*"), "×")
+    values <- stringr::str_replace_all(values, stringr::fixed("*"), "×")
     
     if (length(values) > 0) {
       message(prefix, paste(values, collapse = sep))
@@ -1304,7 +1368,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
     )
   }
   
-  .resolve_pillai_cloud_cached <- function(base, row_meta, within_ref,
+  .resolve_pillai_cloud_cached <- function(base, row_meta, initial_speaker_stratification,
                                            exclude_same_speaker = FALSE) {
     row_group <- if (!is.na(group_nm) && group_nm %in% names(row_meta)) {
       as.character(row_meta[[group_nm]][1])
@@ -1312,7 +1376,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
       NA_character_
     }
     
-    specs_here <- .make_within_reference_specs(row_group, within_ref)
+    specs_here <- .make_initial_speaker_stratificationerence_specs(row_group, initial_speaker_stratification)
     cache_cols <- unique(c(
       if (!is.na(group_nm)) group_nm else NULL,
       if (!is.na(speaker_nm)) speaker_nm else NULL,
@@ -1322,7 +1386,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
     
     key <- paste(
       "pillai",
-      paste0("within_ref=", within_ref),
+      paste0("initial_speaker_stratification=", initial_speaker_stratification),
       paste0("exclude_same_speaker=", exclude_same_speaker),
       paste0("specs=", paste(names(specs_here), collapse = ">")),
       .row_cache_key(row_meta, cache_cols),
@@ -1504,7 +1568,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
       target_index <- xdata %>%
         dplyr::distinct(dplyr::across(dplyr::all_of(target_keys)))
       
-      exclude_same_euc <- within_ref %in% c("population_pooled", "inter_speaker_mean")
+      exclude_same_euc <- isTRUE(exclude_focal_speaker_from_ref)
       
       within_euc_refs <- target_index %>%
         dplyr::rowwise() %>%
@@ -1516,7 +1580,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
               base = base_euc,
               row_meta = row_meta,
               contrast_value = lvl2,
-              within_ref = within_ref,
+              initial_speaker_stratification = initial_speaker_stratification,
               require_invertible = FALSE,
               exclude_same_speaker = exclude_same_euc
             )
@@ -1525,7 +1589,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
               base = base_euc,
               row_meta = row_meta,
               contrast_value = lvl1,
-              within_ref = within_ref,
+              initial_speaker_stratification = initial_speaker_stratification,
               require_invertible = FALSE,
               exclude_same_speaker = exclude_same_euc
             )
@@ -1730,7 +1794,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
           speaker_nm, condition_nm, condition_vars_nm
         ))))
       
-      exclude_same_wit <- within_ref %in% c("population_pooled", "inter_speaker_mean")
+      exclude_same_wit <- isTRUE(exclude_focal_speaker_from_ref)
       
       within_cloud_refs <- target_index %>%
         dplyr::rowwise() %>%
@@ -1741,7 +1805,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
               base = base,
               row_meta = row_meta,
               contrast_value = lvl1,
-              within_ref = within_ref,
+              initial_speaker_stratification = initial_speaker_stratification,
               require_invertible = TRUE,
               exclude_same_speaker = exclude_same_wit
             )
@@ -1749,7 +1813,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
               base = base,
               row_meta = row_meta,
               contrast_value = lvl2,
-              within_ref = within_ref,
+              initial_speaker_stratification = initial_speaker_stratification,
               require_invertible = TRUE,
               exclude_same_speaker = exclude_same_wit
             )
@@ -1758,9 +1822,9 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                 base = base,
                 row_meta = row_meta,
                 contrast_value = lvl1,
-                within_ref = within_ref,
+                initial_speaker_stratification = initial_speaker_stratification,
                 require_invertible = FALSE,
-                exclude_same_speaker = FALSE
+                exclude_same_speaker = isTRUE(exclude_focal_speaker_from_ref)
               )
             } else {
               NULL
@@ -1770,9 +1834,9 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                 base = base,
                 row_meta = row_meta,
                 contrast_value = lvl2,
-                within_ref = within_ref,
+                initial_speaker_stratification = initial_speaker_stratification,
                 require_invertible = FALSE,
-                exclude_same_speaker = FALSE
+                exclude_same_speaker = isTRUE(exclude_focal_speaker_from_ref)
               )
             } else {
               NULL
@@ -2026,7 +2090,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
       target_index <- xdata %>%
         dplyr::distinct(dplyr::across(dplyr::all_of(target_keys)))
       
-      exclude_same_pillai <- within_ref %in% c("population_pooled", "inter_speaker_mean")
+      exclude_same_pillai <- isTRUE(exclude_focal_speaker_from_ref)
       
       pillai_cloud_refs <- target_index %>%
         dplyr::rowwise() %>%
@@ -2037,7 +2101,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
             ref_cloud <- .resolve_pillai_cloud_cached(
               base = base_pillai,
               row_meta = row_meta,
-              within_ref = within_ref,
+              initial_speaker_stratification = initial_speaker_stratification,
               exclude_same_speaker = exclude_same_pillai
             )
             
@@ -2166,6 +2230,8 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                 row_meta <- dplyr::pick(dplyr::everything())
                 
                 # Focal cloud:
+                # Restrict to the focal token's contrast_var level:
+                # inter-group Pillai compares the same vowel/category across groups.
                 # keep the requested focal stratification, usually
                 # Time × WordAge × Speaker, with fallback to simpler clouds.
                 focal_specs <- .make_specs(
@@ -2178,7 +2244,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                   pool = focal_pool_all,
                   row_meta = row_meta,
                   spec_list = focal_specs,
-                  contrast_value = NULL
+                  contrast_value = row_meta[[contrast_nm]][1]
                 )
                 
                 # Reference cloud:
@@ -2194,7 +2260,7 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                   pool = ref_pool_all,
                   row_meta = row_meta,
                   spec_list = ref_specs,
-                  contrast_value = NULL
+                  contrast_value = row_meta[[contrast_nm]][1]
                 )
                 
                 pil_value <- if (is.null(focal_cloud$data) || is.null(ref_cloud$data)) {
@@ -2357,17 +2423,17 @@ Suggestion: compute these subject(s) separately, or set their group as the refer
                 base = base,
                 row_meta = row_meta,
                 contrast_value = lvl1,
-                within_ref = within_ref,
+                initial_speaker_stratification = initial_speaker_stratification,
                 require_invertible = FALSE,
-                exclude_same_speaker = FALSE
+                exclude_same_speaker = isTRUE(exclude_focal_speaker_from_ref)
               )
               cloud2 <- .resolve_within_cloud_cached(
                 base = base,
                 row_meta = row_meta,
                 contrast_value = lvl2,
-                within_ref = within_ref,
+                initial_speaker_stratification = initial_speaker_stratification,
                 require_invertible = FALSE,
-                exclude_same_speaker = FALSE
+                exclude_same_speaker = isTRUE(exclude_focal_speaker_from_ref)
               )
               tibble::tibble(
                 bha_ref_lvl1 = list(cloud1),
